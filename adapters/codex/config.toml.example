@@ -1,6 +1,6 @@
 # Add this to ~/.codex/config.toml or your project's .codex/config.toml
-# Requires `etree` in $PATH (installed via ./scripts/install.sh)
+# Requires `exptree` in $PATH (installed via ./scripts/install.sh)
 
-[mcp_servers.exp-tree]
-command = "etree"
+[mcp_servers.exptree]
+command = "exptree"
 args = ["mcp"]

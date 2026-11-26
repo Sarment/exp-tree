@@ -1,6 +1,6 @@
 import { ExpTreeClient } from "../shared/client";
 
-export const name = "dsh-plugin-exp-tree";
+export const name = "dsh-plugin-exptree";
 export const inject = ["tools"];
 
 export function apply(ctx: {

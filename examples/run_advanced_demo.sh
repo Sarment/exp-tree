@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-ETREE="$ROOT_DIR/bin/etree"
+ETREE="$ROOT_DIR/bin/exptree"
 if [ ! -x "$ETREE" ]; then
-  ETREE="$(command -v etree)"
+  ETREE="$(command -v exptree || command -v etree)"
 fi
 WORK="$ROOT_DIR/examples/synergy_workspace"
 

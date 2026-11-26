@@ -1,5 +1,5 @@
 {
-  "name": "exp-tree",
+  "name": "exptree",
   "version": "0.3.0",
   "type": "module",
   "description": "Git-Native Split-and-Converge AutoResearch DAG Engine for Codex, OpenCode, Pi, DeepSeek Harness (dsh), and Antigravity",
@@ -8,7 +8,7 @@
       "./adapters/pi/index.ts"
     ],
     "skills": [
-      "./skills/autoresearch-tree"
+      "./skills/exptree"
     ]
   }
 }

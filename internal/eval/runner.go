@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sarment/exp-tree/internal/gitops"
-	"github.com/sarment/exp-tree/internal/tree"
+	"github.com/sarment/exptree/internal/gitops"
+	"github.com/sarment/exptree/internal/tree"
 )
 
 const defaultPattern = `(?i)(?:METRIC|SCORE|OPS_PER_SEC|VAL_ACC|LOSS)=([-+]?[0-9]*\.?[0-9]+)`

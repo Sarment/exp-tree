@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sarment/exp-tree/internal/eval"
-	"github.com/sarment/exp-tree/internal/tree"
+	"github.com/sarment/exptree/internal/eval"
+	"github.com/sarment/exptree/internal/tree"
 )
 
 func TestMCPStdioInitializeAndToolCall(t *testing.T) {

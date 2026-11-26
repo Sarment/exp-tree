@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sarment/exp-tree/internal/tree"
+	"github.com/sarment/exptree/internal/tree"
 )
 
 // StrategyMetrics 汇总不同 Agent 搜索策略在相同评估预算（Eval Budget）下的核心量化表现

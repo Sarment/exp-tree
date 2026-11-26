@@ -1,6 +1,8 @@
 ---
-name: autoresearch-tree
-description: Hub-and-spoke Super-Agent (PI) AutoResearch workflow with ExpTree. Activate whenever the user starts a scientific/algorithmic exploration, wants one main Super-Agent orchestrating isolated worker subagents, or asks about nodes selected in the ExpTree sidebar.
+name: exptree
+description: Hub-and-spoke Super-Agent (PI) AutoResearch workflow with ExpTree. Activate whenever the user invokes /exptree, starts a scientific/algorithmic exploration, wants one main Super-Agent orchestrating isolated worker subagents, or asks about nodes selected in the ExpTree sidebar.
+metadata:
+  logo: logo.svg
 ---
 
 # ExpTree Super-Agent (PI) Hub-and-Spoke Protocol
@@ -12,13 +14,14 @@ In this workflow, **YOU (the main conversation agent) are the Principal Investig
 
 ## 1. 1-to-1 Conversation Binding & Zero-Friction Focus Sync
 Each Antigravity conversation binds 1-to-1 to its own experiment tree in `~/.gemini/antigravity/scratch/.exptree_bindings/<conversationId>.json`, preventing node focus or context from leaking across parallel conversations.
-- **Automatic Environment Scoping**: `etree` (`up`, `init`, `bind`, `focus`, `brief`, `branch`, `eval`, `converge`) automatically detects `ANTIGRAVITY_CONVERSATION_ID` from the shell environment (or accepts `-conv <conversationId>`, and MCP `etree_init` / `etree_brief` accept `conversation_id`).
-- **Auto-Bind on Init**: Calling `etree up -repo <REPO> -serve=false` (with `ANTIGRAVITY_CONVERSATION_ID` or `-conv <convId>`) initializes the tree AND automatically binds this conversation to `<REPO>`. You can also manage bindings manually via `etree bind -repo <REPO>` or `etree bind -unbind`.
-- **Isolated Sidebar Focus**: When the user clicks a node (or `Cmd/Shift`-clicks multiple nodes) in the `[ExpTree](sidecar://exp-tree/exp_board/)` side panel, the panel writes strictly to `.exptree_bindings/<conversationId>.json` and injects `🎯 [UI 实时选中焦点]` into `etree brief` for this conversation only.
-- Whenever the user asks *"这个节点做了什么？"*, *"为什么失败了？"*, *"从这继续往下试"*, or *"把选中的合起来"*, run `etree focus` (and `etree brief` / `git show` on that node's commit) and answer directly as the Super-Agent!
+- **Automatic Environment Scoping**: `exptree` (`up`, `init`, `bind`, `focus`, `brief`, `branch`, `eval`, `converge`, and symlink alias `etree`) automatically detects `ANTIGRAVITY_CONVERSATION_ID` from the shell environment (or accepts `-conv <conversationId>`, and MCP `etree_init` / `etree_brief` accept `conversation_id`).
+- **Auto-Bind on Init**: Calling `exptree up -repo <REPO> -serve=false` (with `ANTIGRAVITY_CONVERSATION_ID` or `-conv <convId>`) initializes the tree AND automatically binds this conversation to `<REPO>`. You can also manage bindings manually via `exptree bind -repo <REPO>` or `exptree bind -unbind`.
+- **Cloud / Remote Server Binding**: When developing on a remote Linux/GPU host (with `exptree serve` over SSH tunnel or direct SSH), bind a lightweight remote anchor locally via `exptree bind -remote http://127.0.0.1:17421 -ssh <host> -repo <remote-repo>` (or direct SSH `exptree bind -ssh <host> -repo <remote-repo>`); the sidebar transparently proxies state/diffs and caches snapshots offline.
+- **Isolated Sidebar Focus**: When the user clicks a node (or `Cmd/Shift`-clicks multiple nodes) in the `[ExpTree](sidecar://exptree/exp_board/)` side panel, the panel writes strictly to `.exptree_bindings/<conversationId>.json` and injects `🎯 [UI 实时选中焦点]` into `exptree brief` for this conversation only.
+- Whenever the user asks *"这个节点做了什么？"*, *"为什么失败了？"*, *"从这继续往下试"*, or *"把选中的合起来"*, run `exptree focus` (and `exptree brief` / `git show` on that node's commit) and answer directly as the Super-Agent!
 - Always format node mentions as clickable pills:
-  - `[ExpTree · <node-id>](sidecar://exp-tree/exp_board/?repo=<URL-encoded-repo>&node=<node-id>)`
-  - `[ExpTree · <node-id> Diff](sidecar://exp-tree/exp_board/?repo=<URL-encoded-repo>&node=<node-id>&tab=changes)`
+  - `[ExpTree · <node-id>](sidecar://exptree/exp_board/?repo=<URL-encoded-repo>&node=<node-id>)`
+  - `[ExpTree · <node-id> Diff](sidecar://exptree/exp_board/?repo=<URL-encoded-repo>&node=<node-id>&tab=changes)`
 
 ## 2. Communication, Naming & Language Discipline
 Follow these four strict formatting and clarity rules across every tree field and user-facing explanation:
@@ -42,17 +45,17 @@ Follow these four strict formatting and clarity rules across every tree field an
      ```bash
      REPO="${ANTIGRAVITY_APP_DATA_DIR:-$HOME/.gemini/antigravity}/scratch/<slug>"
      mkdir -p "$REPO" && cd "$REPO" && git init && printf "# <topic>\n" > README.md && git add README.md && git commit -m "init: scaffold research repo"
-     etree init -repo "$REPO" -goal "<与用户语言一致的简洁目标描述>" -has-baseline=false
+     exptree init -repo "$REPO" -goal "<与用户语言一致的简洁目标描述>" -has-baseline=false
      ```
-   - `etree init` automatically picks up `ANTIGRAVITY_CONVERSATION_ID` (or pass `-conv <convId>`), binds `.exptree_bindings/<convId>.json`, and switches the `[ExpTree](sidecar://exp-tree/exp_board/)` panel live to `node-0` (`运行中`) while Phase 1 scouting runs.
+   - `exptree init` automatically picks up `ANTIGRAVITY_CONVERSATION_ID` (or pass `-conv <convId>`), binds `.exptree_bindings/<convId>.json`, and switches the `[ExpTree](sidecar://exptree/exp_board/)` panel live to `node-0` (`运行中`) while Phase 1 scouting runs.
 2. **Phase 1 — Known SOTA Baseline vs. Open Frontier (`exp-scout` Mode A)**:
    - Invoke `exp-scout` to survey published literature and open-source implementations.
    - **Strict Baseline Boundary**: Published papers or standard textbook/open-source algorithms may **ONLY** be used to construct `node-0` (or an explicit `[BASELINE]` reproduction node) as the starting floor to beat — **NEVER** pass off a known published method as an exploratory hypothesis branch!
    - Once baseline code and benchmark harness are committed to `main`, finalize `node-0` with:
      ```bash
-     etree up -repo "$REPO" -goal "<与用户语言一致的简洁目标描述>" -objectives "m1:max,m2:min" -constraints "c1<=0.01" -eval-cmd "python3 bench.py" -serve=false
+     exptree up -repo "$REPO" -goal "<与用户语言一致的简洁目标描述>" -objectives "m1:max,m2:min" -constraints "c1<=0.01" -eval-cmd "python3 bench.py" -serve=false
      ```
-     (`etree up` seamlessly replaces the `-has-baseline=false` placeholder, sets multi-objective / constraint specs, and auto-measures `node-0` into `VALIDATED`!)
+     (`exptree up` seamlessly replaces the `-has-baseline=false` placeholder, sets multi-objective / constraint specs, and auto-measures `node-0` into `VALIDATED`!)
 3. **Phase 2 — Mandatory Pre-Flight Novelty Gate (`exp-scout` Mode B — Anti-Collision)**:
    - Before dispatching ANY `exp-worker` on a new exploratory idea (and before `exp-synthesizer` proposes a non-obvious hybrid), send the candidate mechanism(s) to `exp-scout` (Mode B) to run targeted arXiv / scholar / GitHub prior-art searches:
      - If `exp-scout` returns `COLLISION_PUBLISHED` ❌: **DROP IT IMMEDIATELY** (do NOT spawn `exp-worker` on it unless the user explicitly asked to reproduce that baseline).
@@ -60,12 +63,12 @@ Follow these four strict formatting and clarity rules across every tree field an
 4. **Phase 3 — Parallel Orthogonal Exploration (`exp-worker` × K)**:
    - Launch 2–3 `exp-worker` subagents **in parallel** via `invoke_subagent` ONLY on novelty-cleared hypotheses, each in an isolated `-worktree`. Give each worker a concise user-language `-hypothesis` (12–28 Chinese chars or <=12 English words, no `H1/H2` or `[NOVEL_CLEAR]` prefixes).
 5. **Phase 4 — Triage, Retry, or Converge (`exp-synthesizer`)**:
-   - Inspect `etree brief -repo "$REPO"`: rescue bug-pruned novel branches via `-parent <pruned-node-id>`, invoke `exp-synthesizer` when $\ge 2$ complementary Pareto-frontier (`★`) branches emerge, sync the winning commit to `main`, and report both **empirical gains** and **novelty delta vs. prior art** using Section 2's clear action-first prose and canonical `node-X` IDs.
+   - Inspect `exptree brief -repo "$REPO"`: rescue bug-pruned novel branches via `-parent <pruned-node-id>`, invoke `exp-synthesizer` when $\ge 2$ complementary Pareto-frontier (`★`) branches emerge, sync the winning commit to `main`, and report both **empirical gains** and **novelty delta vs. prior art** using Section 2's clear action-first prose and canonical `node-X` IDs.
 6. **Resuming an Interrupted Session (Automatic Orphan Reconciliation)**:
-   - Whenever resuming an existing bound tree in a restarted/re-opened conversation (or when `etree view` / `etree brief` shows stale non-root `EXPLORING` nodes from an interrupted session with no active subagents running), run `etree resume -repo "$REPO"` **first** before branching new work. This evaluates any leftover worktrees or cleanly prunes dead interrupted branches (`PRUNED`), preventing zombie `运行中` nodes. *(Skip `etree resume` if only `node-0` is an unmeasured Step 0 placeholder—finalize `node-0` with `etree up` instead.)*
+   - Whenever resuming an existing bound tree in a restarted/re-opened conversation (or when `exptree view` / `exptree brief` shows stale non-root `EXPLORING` nodes from an interrupted session with no active subagents running), run `exptree resume -repo "$REPO"` **first** before branching new work. This evaluates any leftover worktrees or cleanly prunes dead interrupted branches (`PRUNED`), preventing zombie `运行中` nodes. *(Skip `exptree resume` if only `node-0` is an unmeasured Step 0 placeholder—finalize `node-0` with `exptree up` instead.)*
 
-## 4. Exact `etree` CLI Reference
-*Never read `exp-tree`'s internal Go source files to check flags; use the exact commands below (`BIN=etree`, or `~/.local/bin/etree` if `PATH` isn't refreshed). Metric graders parse stdout lines formatted as `key=value` (or JSON output / Go benchmark ns/op).*
+## 4. Exact `exptree` CLI Reference
+*Never read `exptree`'s internal Go source files to check flags; use the exact commands below (`BIN=exptree`, or `~/.local/bin/exptree`; `etree` works as a symlink alias). Metric graders parse stdout lines formatted as `key=value` (or JSON output / Go benchmark ns/op).*
 
 - **Step 0 placeholder init & auto-bind**:
   `$BIN init -repo <REPO> -goal "<与用户语言一致的简洁目标描述>" -has-baseline=false` *(optional: `-conv <id> -metric <name> -minimize`)*
@@ -82,5 +85,5 @@ Follow these four strict formatting and clarity rules across every tree field an
   `$BIN brief -repo <REPO>` *(omitting `-repo` auto-resolves the bound repo via `ANTIGRAVITY_CONVERSATION_ID`)*
 - **Reconcile interrupted `EXPLORING` orphan branches**:
   `$BIN resume -repo <REPO>` *(optional `-cmd "<cmd>"`, `-conv <id>`)*
-- **Manage conversation binding manually**:
-  `$BIN bind -repo <REPO>` | `$BIN bind -unbind` *(uses `ANTIGRAVITY_CONVERSATION_ID` or `-conv <id>`)*
+- **Manage local or remote conversation binding manually**:
+  `$BIN bind -repo <REPO>` | `$BIN bind -remote http://127.0.0.1:17421 -ssh <host> -repo <remote-repo>` | `$BIN bind -ssh <host> -repo <remote-repo>` | `$BIN bind -unbind` *(uses `ANTIGRAVITY_CONVERSATION_ID` or `-conv <id>`)*

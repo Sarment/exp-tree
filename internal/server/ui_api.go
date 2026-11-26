@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sarment/exp-tree/internal/gitops"
-	"github.com/sarment/exp-tree/internal/tree"
-	"github.com/sarment/exp-tree/internal/webui"
+	"github.com/sarment/exptree/internal/gitops"
+	"github.com/sarment/exptree/internal/tree"
+	"github.com/sarment/exptree/internal/webui"
 )
 
 type parsedDiffLine struct {
@@ -154,6 +154,7 @@ func (s *Server) handlePreloadShim(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleUIRepos(w http.ResponseWriter, _ *http.Request) {
+	s.engine.Reload()
 	snap := s.engine.Snapshot()
 	hasTree := snap.RootID != "" && len(snap.Nodes) > 0
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -173,6 +174,7 @@ func (s *Server) handleUIRepos(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleUIBound(w http.ResponseWriter, _ *http.Request) {
+	s.engine.Reload()
 	snap := s.engine.Snapshot()
 	hasTree := snap.RootID != "" && len(snap.Nodes) > 0
 	repoInfo := map[string]interface{}{
@@ -204,19 +206,38 @@ func (s *Server) handleUIBind(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *Server) handleUIState(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleUIState(w http.ResponseWriter, r *http.Request) {
+	s.engine.Reload()
 	snap := s.engine.Snapshot()
 	initialized := snap.RootID != "" && len(snap.Nodes) > 0
+	var maxUpd int64
+	for _, n := range snap.Nodes {
+		if n != nil {
+			if ns := n.UpdatedAt.UnixNano(); ns > maxUpd {
+				maxUpd = ns
+			}
+		}
+	}
+	etag := fmt.Sprintf("%d-%d-%s-%s-%d", snap.Seq, len(snap.Nodes), snap.ActiveNodeID, snap.BestNodeID, maxUpd)
+	if qEtag := r.URL.Query().Get("etag"); qEtag != "" && qEtag == etag {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"unchanged": true,
+			"etag":      etag,
+			"buildId":   "standalone-1",
+		})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"initialized": initialized,
 		"repo":        s.repoDir,
 		"state":       snap,
-		"etag":        fmt.Sprintf("%d-%s", snap.Seq, snap.ActiveNodeID),
+		"etag":        etag,
 		"buildId":     "standalone-1",
 	})
 }
 
 func (s *Server) handleUIDiff(w http.ResponseWriter, r *http.Request) {
+	s.engine.Reload()
 	toID := r.URL.Query().Get("to")
 	fromOverride := r.URL.Query().Get("from")
 	snap := s.engine.Snapshot()

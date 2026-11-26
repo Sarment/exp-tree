@@ -4,7 +4,7 @@ Antigravity `run_workflow` Multi-Agent Split-and-Converge Pipeline for ExpTree.
 
 Usage inside Antigravity:
   run_workflow(
-      ScriptPath="/path/to/exp-tree/workflows/autoresearch_pipeline.py",
+      ScriptPath="/path/to/exptree/workflows/autoresearch_pipeline.py",
       Args={"repo_dir": "/path/to/repo", "goal": "Optimize latency", "eval_cmd": "go test -bench=."}
   )
 """

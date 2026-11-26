@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sarment/exp-tree/internal/eval"
-	"github.com/sarment/exp-tree/internal/gitops"
-	"github.com/sarment/exp-tree/internal/orchestrator"
-	"github.com/sarment/exp-tree/internal/tree"
+	"github.com/sarment/exptree/internal/eval"
+	"github.com/sarment/exptree/internal/gitops"
+	"github.com/sarment/exptree/internal/orchestrator"
+	"github.com/sarment/exptree/internal/tree"
 )
 
 // TestAgentSupervisedSameLineConflictConvergence 验证最硬核的真实痛点：

@@ -9,9 +9,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sarment/exp-tree/internal/eval"
-	"github.com/sarment/exp-tree/internal/gitops"
-	"github.com/sarment/exp-tree/internal/tree"
+	"github.com/sarment/exptree/internal/eval"
+	"github.com/sarment/exptree/internal/gitops"
+	"github.com/sarment/exptree/internal/tree"
 )
 
 // TaskSpec 定义 Super Agent 向下派发的单个正交实验任务

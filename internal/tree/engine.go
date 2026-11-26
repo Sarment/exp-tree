@@ -36,9 +36,11 @@ type ForestState struct {
 }
 
 type Engine struct {
-	mu        sync.RWMutex
-	statePath string
-	state     ForestState
+	mu          sync.RWMutex
+	statePath   string
+	lastModNano int64
+	lastSize    int64
+	state       ForestState
 }
 
 func OpenEngine(statePath string) (*Engine, error) {
@@ -49,15 +51,61 @@ func OpenEngine(statePath string) (*Engine, error) {
 			Nodes:          make(map[string]*ExpNode),
 		},
 	}
-	if raw, err := os.ReadFile(statePath); err == nil && len(raw) > 0 {
-		if err := json.Unmarshal(raw, &e.state); err != nil {
-			return nil, err
-		}
-		if e.state.Nodes == nil {
-			e.state.Nodes = make(map[string]*ExpNode)
+	if info, err := os.Stat(statePath); err == nil {
+		if raw, rErr := os.ReadFile(statePath); rErr == nil && len(raw) > 0 {
+			if err := json.Unmarshal(raw, &e.state); err != nil {
+				return nil, err
+			}
+			if e.state.Nodes == nil {
+				e.state.Nodes = make(map[string]*ExpNode)
+			}
+			e.lastModNano = info.ModTime().UnixNano()
+			e.lastSize = info.Size()
 		}
 	}
 	return e, nil
+}
+
+// Reload refreshes in-memory state from disk when state.json changes externally.
+func (e *Engine) Reload() bool {
+	if e.statePath == "" {
+		return false
+	}
+	info, err := os.Stat(e.statePath)
+	if err != nil {
+		return false
+	}
+	modNano := info.ModTime().UnixNano()
+	sz := info.Size()
+
+	e.mu.RLock()
+	unchanged := modNano == e.lastModNano && sz == e.lastSize
+	e.mu.RUnlock()
+	if unchanged {
+		return false
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if info2, err2 := os.Stat(e.statePath); err2 == nil {
+		modNano = info2.ModTime().UnixNano()
+		sz = info2.Size()
+	}
+	if modNano == e.lastModNano && sz == e.lastSize {
+		return false
+	}
+	raw, err := os.ReadFile(e.statePath)
+	if err != nil || len(raw) == 0 {
+		return false
+	}
+	var fresh ForestState
+	if json.Unmarshal(raw, &fresh) != nil || fresh.Nodes == nil {
+		return false
+	}
+	e.state = fresh
+	e.lastModNano = modNano
+	e.lastSize = sz
+	return true
 }
 
 func (e *Engine) InitRoot(goal, metricName string, higherIsBetter bool, gitCommit string, baselineScore *float64) (*ExpNode, error) {
@@ -854,6 +902,10 @@ func (e *Engine) acquireFileLockReload() func() {
 		var fresh ForestState
 		if json.Unmarshal(raw, &fresh) == nil && fresh.Nodes != nil {
 			e.state = fresh
+			if info, sErr := os.Stat(e.statePath); sErr == nil {
+				e.lastModNano = info.ModTime().UnixNano()
+				e.lastSize = info.Size()
+			}
 		}
 	}
 	return func() {
@@ -877,7 +929,14 @@ func (e *Engine) saveLocked() error {
 	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, e.statePath)
+	if err := os.Rename(tmp, e.statePath); err != nil {
+		return err
+	}
+	if info, sErr := os.Stat(e.statePath); sErr == nil {
+		e.lastModNano = info.ModTime().UnixNano()
+		e.lastSize = info.Size()
+	}
+	return nil
 }
 
 func copyNode(n *ExpNode) *ExpNode {

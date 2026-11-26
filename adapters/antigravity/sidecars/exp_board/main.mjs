@@ -1,20 +1,131 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { SidecarApp, Response } from 'sidecar_sdk';
+
+const execFileAsync = promisify(execFile);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const APP_DATA_DIR = process.env.ANTIGRAVITY_APP_DATA_DIR || join(homedir(), '.gemini', 'antigravity');
 const SCRATCH_ROOT = join(APP_DATA_DIR, 'scratch');
 const BRAIN_ROOT = join(APP_DATA_DIR, 'brain');
 const BINDINGS_DIR = join(SCRATCH_ROOT, '.exptree_bindings');
-const CONV_RE = /^[0-9a-f-]{8,64}$/i;
+const CACHE_DIR = join(SCRATCH_ROOT, '.exptree_cache');
+const SSH_SOCK_DIR = join(SCRATCH_ROOT, '.exptree_ssh');
+const CONV_RE = /^[a-zA-Z0-9_-]{6,80}$/;
+const SSH_HOST_RE = /^[a-zA-Z0-9._@:-]{1,128}$/;
+const SHA_RE = /^[0-9a-f]{4,40}$/i;
 const isValidConvId = (id) => CONV_RE.test(String(id || '').trim());
 
 const NO_CACHE = { 'Cache-Control': 'no-store, no-cache, must-revalidate' };
 const STATIC_FILES = ['index.html', 'styles.css', 'app.js'];
+
+function isValidSshHost(raw) {
+  const h = String(raw || '').trim();
+  return Boolean(h && !h.startsWith('-') && SSH_HOST_RE.test(h));
+}
+
+function normalizeHttpEndpoint(raw) {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return '';
+  let u;
+  try {
+    u = new URL(trimmed);
+  } catch {
+    throw new Error('远端 HTTP 地址格式无效');
+  }
+  if ((u.protocol !== 'http:' && u.protocol !== 'https:') || !u.host) {
+    throw new Error('远端地址仅支持 http:// 或 https://');
+  }
+  return trimmed.replace(/\/+$/, '');
+}
+
+function shellQuote(s) {
+  return `'${String(s ?? '').replace(/'/g, "'\\''")}'`;
+}
+
+function cachePath(convId) {
+  const clean = String(convId || '').trim();
+  return isValidConvId(clean) ? join(CACHE_DIR, `${clean}.json`) : '';
+}
+
+function readCachedState(convId) {
+  const p = cachePath(convId);
+  if (!p || !existsSync(p)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(p, 'utf-8'));
+    if (parsed && parsed.state) return parsed;
+    if (parsed && parsed.nodes) return { cached_at: '', state: parsed };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedState(convId, state) {
+  const p = cachePath(convId);
+  if (!p || !state || typeof state !== 'object') return;
+  try {
+    mkdirSync(CACHE_DIR, { recursive: true });
+    const tmp = `${p}.tmp.${process.pid}.${Date.now()}`;
+    writeFileSync(tmp, JSON.stringify({
+      cached_at: new Date().toISOString(),
+      state,
+    }, null, 2), 'utf-8');
+    renameSync(tmp, p);
+  } catch {
+    // ignore cache write failure
+  }
+}
+
+function removeCachedState(convId) {
+  const cp = cachePath(convId);
+  if (!cp) return;
+  try {
+    unlinkSync(cp);
+  } catch (err) {
+    if (err?.code !== 'ENOENT') {
+      // ignore
+    }
+  }
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs = 3500) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(new Error(`Timeout after ${timeoutMs}ms`)), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: ac.signal, headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function sshExec(sshHost, remoteCmd, timeoutMs = 4500) {
+  if (!isValidSshHost(sshHost)) {
+    throw new Error('无效的 SSH 主机名');
+  }
+  mkdirSync(SSH_SOCK_DIR, { recursive: true, mode: 0o700 });
+  const args = [
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=4',
+    '-o', 'ControlMaster=auto',
+    '-o', 'ControlPersist=60',
+    '-o', `ControlPath=${join(SSH_SOCK_DIR, 'cm-%r@%h:%p')}`,
+    sshHost,
+    remoteCmd,
+  ];
+  const { stdout } = await execFileAsync('ssh', args, {
+    encoding: 'utf-8',
+    maxBuffer: 6 * 1024 * 1024,
+    timeout: timeoutMs,
+  });
+  return stdout;
+}
 
 function bindingPath(convId) {
   const clean = String(convId || '').trim();
@@ -40,6 +151,21 @@ function writeBindingAtomic(convId, obj) {
   renameSync(tmp, p);
 }
 
+function resolveConvFromRequest(data) {
+  if (isValidConvId(data?.conversationId)) return String(data.conversationId).trim();
+  if (isValidConvId(process.env.ANTIGRAVITY_CONVERSATION_ID)) return String(process.env.ANTIGRAVITY_CONVERSATION_ID).trim();
+  return '';
+}
+
+function resolveRemoteBinding(convId, repoParam) {
+  if (!convId) return null;
+  const binding = readBinding(convId);
+  if (!binding || binding.mode !== 'remote' || !binding.remote?.repo) return null;
+  const reqRepo = String(repoParam || '').trim();
+  if (reqRepo && reqRepo !== String(binding.remote.repo).trim()) return null;
+  return binding;
+}
+
 function readRepoOwnerConv(repoPath) {
   const metaPath = join(repoPath, '.git', 'exp-tree', 'binding.json');
   if (!existsSync(metaPath)) return '';
@@ -48,7 +174,7 @@ function readRepoOwnerConv(repoPath) {
     const owner = String(meta.conversation_id || '').trim();
     if (!isValidConvId(owner)) return '';
     const ob = readBinding(owner);
-    if (!ob?.repo || resolve(ob.repo) !== resolve(repoPath)) return '';
+    if (!ob || ob.mode === 'remote' || !ob.repo || resolve(ob.repo) !== resolve(repoPath)) return '';
     return owner;
   } catch {
     return '';
@@ -74,7 +200,7 @@ function writeRepoOwnerConv(repoPath, convId, boundAt, now) {
 
 function deleteBinding(convId) {
   const existing = readBinding(convId);
-  if (existing?.repo) {
+  if (existing?.mode !== 'remote' && existing?.repo) {
     const metaPath = join(existing.repo, '.git', 'exp-tree', 'binding.json');
     try {
       if (existsSync(metaPath)) {
@@ -87,6 +213,7 @@ function deleteBinding(convId) {
       // ignore
     }
   }
+  removeCachedState(convId);
   const p = bindingPath(convId);
   if (!p) return;
   try {
@@ -276,6 +403,26 @@ function parseUnifiedDiff(raw) {
   return files;
 }
 
+function buildCompareTargets(state, toNode, toId) {
+  const pids = Array.isArray(toNode.parent_ids) && toNode.parent_ids.length
+    ? toNode.parent_ids
+    : (toNode.parent_id ? [toNode.parent_id] : []);
+  const compareTargets = [];
+  for (const pid of pids) {
+    if (state.nodes?.[pid]) {
+      compareTargets.push({ id: pid, role: 'parent', commit: (state.nodes[pid].git_commit || '').slice(0, 7) });
+    }
+  }
+  if (state.root_id && state.root_id !== toId && !pids.includes(state.root_id) && state.nodes?.[state.root_id]) {
+    compareTargets.push({
+      id: state.root_id,
+      role: 'baseline',
+      commit: (state.nodes[state.root_id].git_commit || '').slice(0, 7),
+    });
+  }
+  return { pids, compareTargets };
+}
+
 const app = new SidecarApp();
 
 app.page('/', () => new Response(readFileSync(join(__dirname, 'index.html'), 'utf-8'), {
@@ -339,10 +486,40 @@ app.api('/api/repos', (data) => {
 
 app.api('/api/bound', (data) => {
   // Never fall back to newest transcript in BRAIN_ROOT here; unbound conversations must stay isolated!
-  const convId = isValidConvId(data.conversationId)
-    ? String(data.conversationId).trim()
-    : (isValidConvId(process.env.ANTIGRAVITY_CONVERSATION_ID) ? String(process.env.ANTIGRAVITY_CONVERSATION_ID).trim() : '');
+  const convId = resolveConvFromRequest(data);
   let binding = convId ? readBinding(convId) : null;
+
+  if (binding?.mode === 'remote' && binding?.remote?.repo) {
+    const remoteRepo = binding.remote.repo;
+    const cached = convId ? readCachedState(convId) : null;
+    const st = cached?.state;
+    const nodeCount = st?.nodes ? Object.keys(st.nodes).length : 0;
+    return {
+      conversationId: convId,
+      standalone: false,
+      bound: Boolean(remoteRepo),
+      mode: 'remote',
+      remote: binding.remote,
+      repo: remoteRepo,
+      repoInfo: {
+        path: remoteRepo,
+        label: basename(remoteRepo) || remoteRepo,
+        hasTree: true,
+        isWorkspace: false,
+        isRemote: true,
+        sshHost: binding.remote.ssh_host || '',
+        transport: binding.remote.transport || '',
+        endpoint: binding.remote.endpoint || '',
+        nodeCount,
+        goal: st?.goal || '',
+        metricName: st?.metric_name || '',
+      },
+      focus: binding,
+      repos: listRepos(data.workspaces || '', convId),
+      buildId: getBuildId(),
+    };
+  }
+
   if (binding?.repo && !existsSync(binding.repo)) {
     deleteBinding(convId);
     binding = null;
@@ -352,6 +529,8 @@ app.api('/api/bound', (data) => {
     conversationId: convId,
     standalone: false,
     bound: Boolean(boundRepo),
+    mode: 'local',
+    remote: null,
     repo: boundRepo,
     repoInfo: boundRepo ? summarizeRepo(boundRepo, false) : null,
     focus: binding || null,
@@ -361,16 +540,70 @@ app.api('/api/bound', (data) => {
 }, 'GET');
 
 app.api('/api/bind', (data) => {
-  const convId = isValidConvId(data.conversationId)
-    ? String(data.conversationId).trim()
-    : (isValidConvId(process.env.ANTIGRAVITY_CONVERSATION_ID) ? String(process.env.ANTIGRAVITY_CONVERSATION_ID).trim() : '');
+  const convId = resolveConvFromRequest(data);
   if (!convId) {
     throw new Error('缺少有效的对话 ID (conversationId)');
   }
+  const mode = String(data.mode || '').trim();
   const repoRaw = String(data.repo || '').trim();
+
+  if (mode === 'remote') {
+    if (!repoRaw) {
+      throw new Error('请填写远端仓库路径');
+    }
+    const endpoint = normalizeHttpEndpoint(data.endpoint || '');
+    const sshHost = String(data.sshHost || '').trim();
+    if (!endpoint && !sshHost) {
+      throw new Error('请填写远端 HTTP 隧道地址或 SSH 主机名');
+    }
+    if (sshHost && !isValidSshHost(sshHost)) {
+      throw new Error('SSH 主机名格式无效');
+    }
+    const transport = endpoint ? 'http' : 'ssh';
+    const remote = {
+      transport,
+      ...(endpoint ? { endpoint } : {}),
+      ...(sshHost ? { ssh_host: sshHost } : {}),
+      repo: repoRaw,
+    };
+    const now = new Date().toISOString();
+    const prev = readBinding(convId);
+    const sameTarget = Boolean(
+      prev?.mode === 'remote' &&
+      prev?.remote &&
+      prev.remote.transport === remote.transport &&
+      (prev.remote.endpoint || '') === endpoint &&
+      (prev.remote.ssh_host || '') === sshHost &&
+      (prev.remote.repo || '') === repoRaw
+    );
+    if (!sameTarget) {
+      removeCachedState(convId);
+    }
+    const next = {
+      conversation_id: convId,
+      mode: 'remote',
+      remote,
+      repo: repoRaw,
+      selected_node_id: sameTarget ? String(prev.selected_node_id || '') : '',
+      selected_node_ids: sameTarget && Array.isArray(prev.selected_node_ids) ? prev.selected_node_ids : [],
+      active_tab: sameTarget ? String(prev.active_tab || 'tree') : 'tree',
+      bound_at: (sameTarget && prev.bound_at) ? prev.bound_at : now,
+      updated_at: now,
+    };
+    writeBindingAtomic(convId, next);
+    return {
+      ok: true,
+      bound: true,
+      mode: 'remote',
+      remote,
+      conversationId: convId,
+      repo: repoRaw,
+    };
+  }
+
   if (!repoRaw) {
     deleteBinding(convId);
-    return { ok: true, bound: false, conversationId: convId };
+    return { ok: true, bound: false, mode: 'local', remote: null, conversationId: convId };
   }
   const absRepo = resolve(repoRaw);
   if (!existsSync(absRepo)) {
@@ -378,9 +611,11 @@ app.api('/api/bind', (data) => {
   }
   const now = new Date().toISOString();
   const prev = readBinding(convId);
-  const sameRepo = Boolean(prev?.repo && resolve(prev.repo) === absRepo);
+  const sameRepo = Boolean(prev?.mode !== 'remote' && prev?.repo && resolve(prev.repo) === absRepo);
+  removeCachedState(convId);
   const next = {
     conversation_id: convId,
+    mode: 'local',
     repo: absRepo,
     selected_node_id: sameRepo ? String(prev.selected_node_id || '') : '',
     selected_node_ids: sameRepo && Array.isArray(prev.selected_node_ids) ? prev.selected_node_ids : [],
@@ -393,35 +628,208 @@ app.api('/api/bind', (data) => {
   return {
     ok: true,
     bound: true,
+    mode: 'local',
+    remote: null,
     conversationId: convId,
     repo: absRepo,
     repoInfo: summarizeRepo(absRepo, false),
   };
 }, 'GET');
 
-app.api('/api/state', (data) => {
+app.api('/api/state', async (data) => {
   const buildId = getBuildId();
+  const convId = resolveConvFromRequest(data);
+  const remoteBinding = resolveRemoteBinding(convId, data.repo);
+
+  if (remoteBinding) {
+    const remote = remoteBinding.remote;
+    const remoteRepo = remote.repo;
+    try {
+      if (remote.transport === 'http' && remote.endpoint) {
+        const hasCache = Boolean(readCachedState(convId)?.state?.nodes);
+        const prefix = `${buildId}|remote|`;
+        const rawReqEtag = String(data.etag || '');
+        const passEtag = (hasCache && rawReqEtag.startsWith(prefix)) ? rawReqEtag.slice(prefix.length) : '';
+        const res = await fetchJsonWithTimeout(`${remote.endpoint}/api/state?etag=${encodeURIComponent(passEtag)}`, 3500);
+        if (res.unchanged) {
+          return {
+            unchanged: true,
+            etag: `${prefix}${res.etag || passEtag}`,
+            remote: true,
+            offline: false,
+            buildId,
+          };
+        }
+        if (res.state?.nodes) {
+          writeCachedState(convId, res.state);
+        }
+        const etag = `${prefix}${res.etag || ''}`;
+        return {
+          initialized: Boolean(res.initialized && res.state?.nodes),
+          repo: remoteRepo,
+          state: res.state || null,
+          etag,
+          remote: true,
+          offline: false,
+          buildId,
+        };
+      }
+
+      const stateFile = `${remoteRepo}/.git/exp-tree/state.json`;
+      const raw = await sshExec(
+        remote.ssh_host,
+        `if [ -f ${shellQuote(stateFile)} ]; then cat ${shellQuote(stateFile)}; else printf '__NO_STATE__'; fi`,
+        4500
+      );
+      if (raw.trim() === '__NO_STATE__') {
+        return {
+          initialized: false,
+          repo: remoteRepo,
+          state: null,
+          etag: `${buildId}|ssh|uninit`,
+          remote: true,
+          offline: false,
+          buildId,
+        };
+      }
+      const state = JSON.parse(raw);
+      const nodeCount = Object.keys(state?.nodes || {}).length;
+      if (state?.nodes && nodeCount > 0) {
+        writeCachedState(convId, state);
+      }
+      const etag = `${buildId}|ssh|${raw.length}|${state.seq || 0}|${nodeCount}`;
+      if (data.etag && data.etag === etag) {
+        return { unchanged: true, etag, remote: true, offline: false, buildId };
+      }
+      return {
+        initialized: Boolean(state?.root_id && nodeCount > 0),
+        repo: remoteRepo,
+        state,
+        etag,
+        remote: true,
+        offline: false,
+        buildId,
+      };
+    } catch (err) {
+      const cached = readCachedState(convId);
+      return {
+        initialized: Boolean(cached?.state?.root_id && cached?.state?.nodes),
+        repo: remoteRepo,
+        state: cached?.state || null,
+        cachedAt: cached?.cached_at || '',
+        etag: `${buildId}|offline|${cached?.cached_at || 'none'}`,
+        remote: true,
+        offline: true,
+        offlineReason: String(err?.message || err || 'Remote unreachable'),
+        buildId,
+      };
+    }
+  }
+
   const repo = data.repo || '';
   if (!repo || !existsSync(repo)) {
-    return { initialized: false, state: null, buildId };
+    return { initialized: false, state: null, remote: false, offline: false, buildId };
   }
   const statePath = join(repo, '.git', 'exp-tree', 'state.json');
   if (!existsSync(statePath)) {
-    return { initialized: false, repo, state: null, buildId };
+    return { initialized: false, repo, state: null, remote: false, offline: false, buildId };
   }
   const st = statSync(statePath);
   const etag = `${buildId}|${repo}|${st.mtimeMs}|${st.size}`;
   if (data.etag && data.etag === etag) {
-    return { unchanged: true, etag, buildId };
+    return { unchanged: true, etag, remote: false, offline: false, buildId };
   }
   const state = JSON.parse(readFileSync(statePath, 'utf-8'));
-  return { initialized: true, repo, state, etag, buildId };
+  return { initialized: true, repo, state, etag, remote: false, offline: false, buildId };
 }, 'GET');
 
-app.api('/api/diff', (data) => {
-  const repo = data.repo || '';
+app.api('/api/diff', async (data) => {
+  const convId = resolveConvFromRequest(data);
+  const remoteBinding = resolveRemoteBinding(convId, data.repo);
   const toId = data.to || '';
   const fromOverride = data.from || '';
+
+  if (remoteBinding) {
+    const remote = remoteBinding.remote;
+    if (remote.transport === 'http' && remote.endpoint) {
+      try {
+        return await fetchJsonWithTimeout(
+          `${remote.endpoint}/api/diff?to=${encodeURIComponent(toId)}&from=${encodeURIComponent(fromOverride)}`,
+          4500
+        );
+      } catch (err) {
+        return { files: [], rawDiff: '', offline: true, error: String(err?.message || err) };
+      }
+    }
+
+    try {
+      const stateFile = `${remote.repo}/.git/exp-tree/state.json`;
+      const stateRaw = await sshExec(remote.ssh_host, `cat ${shellQuote(stateFile)}`, 4500);
+      const state = JSON.parse(stateRaw);
+      const toNode = state.nodes?.[toId];
+      if (!toNode) return { files: [], rawDiff: '', error: 'Node not found' };
+
+      const { pids, compareTargets } = buildCompareTargets(state, toNode, toId);
+      const fromId = fromOverride || pids[0] || '';
+      const parentNode = fromId ? state.nodes?.[fromId] : null;
+      const isPruned = toNode.status === 'PRUNED';
+      const toSHA = String(toNode.git_commit || '').trim();
+      const qRepo = shellQuote(remote.repo);
+
+      if (!parentNode) {
+        if (!toSHA || !SHA_RE.test(toSHA)) {
+          return { files: [], rawDiff: '', fromId: '', fromLabel: 'empty', toLabel: toNode.id, compareTargets };
+        }
+        const rawDiff = await sshExec(remote.ssh_host, `git -C ${qRepo} show --format= --unified=3 ${toSHA}`, 5000);
+        return {
+          files: parseUnifiedDiff(rawDiff),
+          rawDiff,
+          fromId: '',
+          fromLabel: 'Initial Snapshot',
+          toLabel: `${toNode.id} (${toSHA.slice(0, 7)})`,
+          compareTargets,
+        };
+      }
+
+      const fromSHA = String(parentNode.git_commit || '').trim();
+      if (fromSHA === toSHA && isPruned) {
+        return {
+          files: [],
+          rawDiff: '',
+          isPruned: true,
+          prunedLegacyNoCommit: true,
+          pruneDigest: toNode.prune_digest || '早期剪枝节点未保存代码快照；新剪枝节点均自动保留失败 Commit。',
+          fromId: parentNode.id,
+          fromLabel: `${parentNode.id} (${fromSHA.slice(0, 7)})`,
+          toLabel: `${toNode.id} (旧版未存快照)`,
+          compareTargets,
+        };
+      }
+
+      if (!SHA_RE.test(fromSHA) || (toSHA && !SHA_RE.test(toSHA))) {
+        return { files: [], rawDiff: '', isPruned, pruneDigest: toNode.prune_digest || '', error: 'Invalid git commit SHA', compareTargets };
+      }
+
+      const gitCmd = toSHA && toSHA !== fromSHA
+        ? `git -C ${qRepo} diff --unified=3 ${fromSHA} ${toSHA}`
+        : `git -C ${qRepo} diff --unified=3 ${fromSHA}`;
+      const rawDiff = await sshExec(remote.ssh_host, gitCmd, 5000);
+      return {
+        files: parseUnifiedDiff(rawDiff),
+        rawDiff,
+        isPruned,
+        pruneDigest: toNode.prune_digest || '',
+        fromId: parentNode.id,
+        fromLabel: `${parentNode.id} (${fromSHA.slice(0, 7)})`,
+        toLabel: `${toNode.id} (${(toSHA || 'working').slice(0, 7)})`,
+        compareTargets,
+      };
+    } catch (err) {
+      return { files: [], rawDiff: '', offline: true, error: String(err?.message || err) };
+    }
+  }
+
+  const repo = data.repo || '';
   const statePath = join(repo, '.git', 'exp-tree', 'state.json');
   if (!existsSync(statePath)) return { files: [], rawDiff: '', fromLabel: '', toLabel: '' };
 
@@ -429,23 +837,7 @@ app.api('/api/diff', (data) => {
   const toNode = state.nodes?.[toId];
   if (!toNode) return { files: [], rawDiff: '', error: 'Node not found' };
 
-  const pids = Array.isArray(toNode.parent_ids) && toNode.parent_ids.length
-    ? toNode.parent_ids
-    : (toNode.parent_id ? [toNode.parent_id] : []);
-  const compareTargets = [];
-  for (const pid of pids) {
-    if (state.nodes?.[pid]) {
-      compareTargets.push({ id: pid, role: 'parent', commit: (state.nodes[pid].git_commit || '').slice(0, 7) });
-    }
-  }
-  if (state.root_id && state.root_id !== toId && !pids.includes(state.root_id) && state.nodes?.[state.root_id]) {
-    compareTargets.push({
-      id: state.root_id,
-      role: 'baseline',
-      commit: (state.nodes[state.root_id].git_commit || '').slice(0, 7),
-    });
-  }
-
+  const { pids, compareTargets } = buildCompareTargets(state, toNode, toId);
   const fromId = fromOverride || pids[0] || '';
   const parentNode = fromId ? state.nodes?.[fromId] : null;
   const isPruned = toNode.status === 'PRUNED';
@@ -510,9 +902,6 @@ app.api('/api/diff', (data) => {
 }, 'GET');
 
 // Reliable chat message sender that resolves conversationId even after sidecar:// navigation!
-// Using GET-compatible or POST? Note: if ?token= was stripped on sidecar:// link navigation,
-// POST would 401 in SidecarApp.#validateToken! Making localhost loopback /api/chat accept GET/POST
-// or ensuring we also expose a safe loopback endpoint guarantees zero 401 when navigating via sidecar://!
 app.api('/api/chat', (data) => {
   const convId = resolveActiveConversationId(data.conversationId || '');
   if (!convId) throw new Error('未能定位当前活跃对话 ID');
@@ -521,9 +910,9 @@ app.api('/api/chat', (data) => {
   return app.sendMessage(convId, message, { projectId: process.env.ANTIGRAVITY_PROJECT_ID });
 }, 'GET');
 
-app.api('/api/focus', (data) => {
+app.api('/api/focus', async (data) => {
   const convId = isValidConvId(data.conversationId) ? String(data.conversationId).trim() : '';
-  const repo = String(data.repo || '');
+  const repo = String(data.repo || '').trim();
   const selectedNodeId = String(data.node || '');
   const multi = String(data.nodes || '')
     .split(',')
@@ -534,11 +923,17 @@ app.api('/api/focus', (data) => {
 
   if (convId) {
     const existing = readBinding(convId);
-    const absRepo = repo ? resolve(repo) : '';
-    if (existing && (!absRepo || resolve(existing.repo || '') === absRepo)) {
+    const isRemote = existing?.mode === 'remote';
+    const matchesRepo = isRemote
+      ? (!repo || String(existing?.remote?.repo || existing?.repo || '') === repo)
+      : (!repo || resolve(existing?.repo || '') === resolve(repo));
+
+    if (existing && matchesRepo) {
       writeBindingAtomic(convId, {
         conversation_id: convId,
-        repo: existing.repo || absRepo,
+        mode: existing.mode || 'local',
+        ...(existing.remote ? { remote: existing.remote } : {}),
+        repo: existing.repo || repo,
         selected_node_id: selectedNodeId,
         selected_node_ids: multi,
         active_tab: tab || existing.active_tab || 'tree',
@@ -546,6 +941,17 @@ app.api('/api/focus', (data) => {
         updated_at: now,
       });
     }
+
+    if (isRemote) {
+      if (existing.remote?.transport === 'http' && existing.remote.endpoint) {
+        fetchJsonWithTimeout(
+          `${existing.remote.endpoint}/api/focus?node=${encodeURIComponent(selectedNodeId)}&nodes=${encodeURIComponent(multi.join(','))}&tab=${encodeURIComponent(tab)}`,
+          1500
+        ).catch(() => {});
+      }
+      return { ok: true, conversationId: convId, mode: 'remote' };
+    }
+
     if (repo && existsSync(join(repo, '.git'))) {
       try {
         if (statSync(join(repo, '.git')).isDirectory()) {
@@ -562,7 +968,7 @@ app.api('/api/focus', (data) => {
         }
       } catch { /* ignore */ }
     }
-    return { ok: true, conversationId: convId };
+    return { ok: true, conversationId: convId, mode: 'local' };
   }
 
   const payload = JSON.stringify({

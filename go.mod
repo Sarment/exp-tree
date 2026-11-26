@@ -1,3 +1,3 @@
-module github.com/sarment/exp-tree
+module github.com/sarment/exptree
 
 go 1.17

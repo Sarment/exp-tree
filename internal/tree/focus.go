@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,17 +12,27 @@ import (
 	"time"
 )
 
+// RemoteTarget 描述远端 Linux/GPU 服务器上的实验树源（HTTP 隧道或直连 SSH）。
+type RemoteTarget struct {
+	Transport string `json:"transport"` // "http" or "ssh"
+	Endpoint  string `json:"endpoint,omitempty"`
+	SSHHost   string `json:"ssh_host,omitempty"`
+	Repo      string `json:"repo"`
+}
+
 // UIFocusState 记录用户在右侧 ExpTree 面板实时点选的仓库与节点焦点，
 // 实现「右侧点选即聚焦，左侧原生聊天框直接说“它 / 这个节点”无缝指代」，
 // 并在每个对话独立绑定时实现跨对话 1-to-1 隔离。
 type UIFocusState struct {
-	ConversationID  string   `json:"conversation_id,omitempty"`
-	Repo            string   `json:"repo"`
-	SelectedNodeID  string   `json:"selected_node_id"`
-	SelectedNodeIDs []string `json:"selected_node_ids,omitempty"`
-	ActiveTab       string   `json:"active_tab,omitempty"`
-	BoundAt         string   `json:"bound_at,omitempty"`
-	UpdatedAt       string   `json:"updated_at"`
+	ConversationID  string        `json:"conversation_id,omitempty"`
+	Mode            string        `json:"mode,omitempty"` // "local" (default) or "remote"
+	Remote          *RemoteTarget `json:"remote,omitempty"`
+	Repo            string        `json:"repo"`
+	SelectedNodeID  string        `json:"selected_node_id"`
+	SelectedNodeIDs []string      `json:"selected_node_ids,omitempty"`
+	ActiveTab       string        `json:"active_tab,omitempty"`
+	BoundAt         string        `json:"bound_at,omitempty"`
+	UpdatedAt       string        `json:"updated_at"`
 }
 
 type repoBindingMeta struct {
@@ -31,7 +42,10 @@ type repoBindingMeta struct {
 	UpdatedAt      string `json:"updated_at"`
 }
 
-var convIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{6,80}$`)
+var (
+	convIDRegex  = regexp.MustCompile(`^[a-zA-Z0-9_-]{6,80}$`)
+	sshHostRegex = regexp.MustCompile(`^[a-zA-Z0-9._@:-]{1,128}$`)
+)
 
 // AppDataDir returns the Antigravity app data root directory.
 func AppDataDir() string {
@@ -206,12 +220,13 @@ func BindConversation(convID, repoPath string) (*UIFocusState, error) {
 	existing := ReadConversationFocus(c)
 	st := UIFocusState{
 		ConversationID: c,
+		Mode:           "local",
 		Repo:           absRepo,
 		ActiveTab:      "tree",
 		BoundAt:        now,
 		UpdatedAt:      now,
 	}
-	if existing != nil && canonicalRepoPath(existing.Repo) == canonicalRepoPath(absRepo) {
+	if existing != nil && existing.Mode != "remote" && canonicalRepoPath(existing.Repo) == canonicalRepoPath(absRepo) {
 		if existing.BoundAt != "" {
 			st.BoundAt = existing.BoundAt
 		}
@@ -242,13 +257,89 @@ func BindConversation(convID, repoPath string) (*UIFocusState, error) {
 	return &st, nil
 }
 
+func validateSSHHost(host string) error {
+	if host == "" {
+		return nil
+	}
+	if strings.HasPrefix(host, "-") || !sshHostRegex.MatchString(host) {
+		return fmt.Errorf("invalid ssh host %q", host)
+	}
+	return nil
+}
+
+func normalizeHTTPEndpoint(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("invalid http endpoint %q", raw)
+	}
+	return strings.TrimRight(raw, "/"), nil
+}
+
+// BindRemoteConversation binds a conversation 1-to-1 to a lightweight remote anchor (HTTP tunnel or direct SSH).
+func BindRemoteConversation(convID string, remote RemoteTarget) (*UIFocusState, error) {
+	c := strings.TrimSpace(convID)
+	if !IsValidConvID(c) {
+		return nil, fmt.Errorf("invalid conversation id %q", convID)
+	}
+	remote.Repo = strings.TrimSpace(remote.Repo)
+	remote.SSHHost = strings.TrimSpace(remote.SSHHost)
+	ep, err := normalizeHTTPEndpoint(strings.TrimSpace(remote.Endpoint))
+	if err != nil {
+		return nil, err
+	}
+	remote.Endpoint = ep
+	if err := validateSSHHost(remote.SSHHost); err != nil {
+		return nil, err
+	}
+	if remote.Repo == "" {
+		return nil, fmt.Errorf("remote repo path is required")
+	}
+	if remote.Endpoint == "" && remote.SSHHost == "" {
+		return nil, fmt.Errorf("either -remote endpoint or -ssh host is required")
+	}
+	if remote.Endpoint != "" {
+		remote.Transport = "http"
+	} else {
+		remote.Transport = "ssh"
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	existing := ReadConversationFocus(c)
+	st := UIFocusState{
+		ConversationID: c,
+		Mode:           "remote",
+		Remote:         &remote,
+		Repo:           remote.Repo,
+		ActiveTab:      "tree",
+		BoundAt:        now,
+		UpdatedAt:      now,
+	}
+	if existing != nil && existing.Mode == "remote" && existing.Remote != nil && *existing.Remote == remote {
+		if existing.BoundAt != "" {
+			st.BoundAt = existing.BoundAt
+		}
+		st.SelectedNodeID = existing.SelectedNodeID
+		st.SelectedNodeIDs = existing.SelectedNodeIDs
+		if existing.ActiveTab != "" {
+			st.ActiveTab = existing.ActiveTab
+		}
+	}
+	if err := WriteConversationFocus(c, st); err != nil {
+		return nil, err
+	}
+	return &st, nil
+}
+
 // UnbindConversation removes the per-conversation binding file (and matching repo marker if owned).
 func UnbindConversation(convID string) error {
 	c := strings.TrimSpace(convID)
 	if !IsValidConvID(c) {
 		return fmt.Errorf("invalid conversation id %q", convID)
 	}
-	if existing := ReadConversationFocus(c); existing != nil && existing.Repo != "" {
+	if existing := ReadConversationFocus(c); existing != nil && existing.Mode != "remote" && existing.Repo != "" {
 		metaPath := filepath.Join(existing.Repo, ".git", "exp-tree", "binding.json")
 		if raw, err := os.ReadFile(metaPath); err == nil {
 			var meta repoBindingMeta

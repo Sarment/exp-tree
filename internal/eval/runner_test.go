@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sarment/exp-tree/internal/gitops"
-	"github.com/sarment/exp-tree/internal/tree"
+	"github.com/sarment/exptree/internal/gitops"
+	"github.com/sarment/exptree/internal/tree"
 )
 
 func TestAutoEvaluatorCommitOnGainAndRollbackOnRegression(t *testing.T) {

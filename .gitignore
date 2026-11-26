@@ -1,6 +1,7 @@
 # Binaries & build artifacts
-bin/
-etree
+/bin/
+/etree
+/exptree
 *.exe
 *.out
 
@@ -19,4 +20,4 @@ __pycache__/
 examples/demo_workspace/
 examples/synergy_workspace/
 examples/pareto_workspace/
-.exptree/
+/.exptree/

@@ -4,6 +4,7 @@
   const LANE_COLORS = ['var(--lane-0)', 'var(--lane-1)', 'var(--lane-2)', 'var(--lane-3)', 'var(--lane-4)'];
   const ICON_FILE = '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75h5l3 3v9.5H4z"/><path d="M9 1.75v3h3"/></svg>';
   const ICON_CHECK = '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>';
+  const ICON_SERVER = '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.2" y="2.8" width="11.6" height="4.2" rx="1"/><rect x="2.2" y="9" width="11.6" height="4.2" rx="1"/><circle cx="4.5" cy="4.9" r="0.6" fill="currentColor" stroke="none"/><circle cx="4.5" cy="11.1" r="0.6" fill="currentColor" stroke="none"/></svg>';
   const urlParams = new URLSearchParams(location.search);
   const currentConv = () => window.sidecar?.conversationId || urlParams.get('conversationId') || '';
 
@@ -14,6 +15,12 @@
     conv: '',
     bound: false,
     boundRepo: '',
+    mode: 'local', // 'local' | 'remote'
+    remote: null,
+    offline: false,
+    offlineReason: '',
+    cachedAt: '',
+    targetKey: '',
     standalone: false,
     previewRepo: urlParams.get('repo') || '',
     repo: '',
@@ -37,6 +44,8 @@
     mapFitPending: true,
     menuOpen: false,
     rebindListOpen: false,
+    menuRemoteOpen: false,
+    emptyRemoteOpen: false,
     lastReposSig: '',
   };
 
@@ -317,12 +326,15 @@
   async function ensureNodeDiffCached(nodeId, fromId = '') {
     if (!S.repo || !nodeId) return null;
     const n = S.tree?.nodes?.[nodeId];
-    const cacheKey = `${S.repo}|${nodeId}|${n?.git_commit || ''}|${fromId}`;
+    const cacheKey = `${S.targetKey || S.repo}|${nodeId}|${n?.git_commit || ''}|${fromId}`;
     if (S.diffCache.has(cacheKey)) return S.diffCache.get(cacheKey);
     try {
-      const url = `/api/diff?repo=${encodeURIComponent(S.repo)}&to=${encodeURIComponent(nodeId)}&from=${encodeURIComponent(fromId)}`;
+      const convParam = S.conv ? `&conversationId=${encodeURIComponent(S.conv)}` : '';
+      const url = `/api/diff?repo=${encodeURIComponent(S.repo)}&to=${encodeURIComponent(nodeId)}&from=${encodeURIComponent(fromId)}${convParam}`;
       const res = await apiGet(url);
-      S.diffCache.set(cacheKey, res);
+      if (!res?.offline) {
+        S.diffCache.set(cacheKey, res);
+      }
       return res;
     } catch {
       return null;
@@ -331,7 +343,7 @@
 
   function getCachedDiff(nodeId, fromId = '') {
     const n = S.tree?.nodes?.[nodeId];
-    return S.diffCache.get(`${S.repo}|${nodeId}|${n?.git_commit || ''}|${fromId}`) || null;
+    return S.diffCache.get(`${S.targetKey || S.repo}|${nodeId}|${n?.git_commit || ''}|${fromId}`) || null;
   }
 
   // ---------- Tab Navigation ----------
@@ -359,6 +371,9 @@
     S.etag = '';
     S.initialized = false;
     S.tree = null;
+    S.offline = false;
+    S.offlineReason = '';
+    S.cachedAt = '';
     S.knownNodeCount = 0;
     S.selectedId = preserveDeepLink ? (urlParams.get('node') || '') : '';
     S.expandedId = S.selectedId;
@@ -373,12 +388,17 @@
 
   function setMenuOpen(open) {
     S.menuOpen = Boolean(open);
-    if (!S.menuOpen) S.rebindListOpen = false;
+    if (!S.menuOpen) {
+      S.rebindListOpen = false;
+      S.menuRemoteOpen = false;
+    }
     $('tree-menu')?.classList.toggle('hidden', !S.menuOpen);
     $('btn-tree-menu')?.setAttribute('aria-expanded', String(S.menuOpen));
     if (!S.menuOpen) {
       $('menu-repo-list')?.classList.add('hidden');
       $('menu-toggle-rebind')?.setAttribute('aria-expanded', 'false');
+      $('menu-remote-form')?.classList.add('hidden');
+      $('menu-toggle-remote')?.setAttribute('aria-expanded', 'false');
     }
   }
 
@@ -390,11 +410,11 @@
     if (!S.rebindListOpen) return;
 
     if (!S.repos.length) {
-      list.innerHTML = '<div class="menu-repo-item" style="color:var(--et-fg-faint);cursor:default;">未检测到实验仓库</div>';
+      list.innerHTML = '<div class="menu-repo-item" style="color:var(--et-fg-faint);cursor:default;">未检测到本地实验仓库</div>';
       return;
     }
     list.innerHTML = S.repos.map((r) => {
-      const cur = r.path === S.boundRepo;
+      const cur = S.mode !== 'remote' && r.path === S.boundRepo;
       const tag = cur ? '当前' : (r.boundByOther ? '其他对话' : (r.hasTree ? `${r.nodeCount} 节点` : '未建树'));
       return `<button type="button" class="menu-repo-item ${cur ? 'current' : ''}" data-bind-repo="${esc(r.path)}" title="${esc(r.path)}">
         <span class="menu-repo-name">${esc(r.label)}</span>
@@ -404,6 +424,36 @@
     list.querySelectorAll('[data-bind-repo]').forEach((btn) => {
       btn.addEventListener('click', () => bindRepo(btn.dataset.bindRepo));
     });
+  }
+
+  function updateOfflineBanner() {
+    const banner = $('offline-banner');
+    if (!banner) return;
+    const isPreview = Boolean(!S.standalone && S.previewRepo && S.previewRepo !== S.boundRepo);
+    const showOffline = Boolean(S.offline && S.mode === 'remote' && !isPreview);
+    banner.classList.toggle('hidden', !showOffline);
+    if (showOffline) {
+      const t = S.cachedAt ? fmtTime(S.cachedAt) : '';
+      $('offline-label').textContent = t
+        ? `远端连接已断开 · 离线只读缓存 (${t})`
+        : '远端连接已断开 · 当前展示本地离线缓存（只读）';
+      banner.title = S.offlineReason || '';
+    }
+
+    const uTitle = $('uninit-title');
+    const uDesc = $('uninit-desc');
+    if (uTitle && uDesc && !S.initialized) {
+      if (S.mode === 'remote' && !isPreview && S.offline) {
+        uTitle.textContent = '无法连接远端实验树';
+        uDesc.textContent = `未能连接到 ${S.remote?.endpoint || S.remote?.ssh_host || '远端服务器'}，且本地尚无离线缓存。请确认 SSH 隧道或免密 SSH 已就绪后点击「重试」。`;
+      } else if (S.mode === 'remote' && !isPreview) {
+        uTitle.textContent = '远端仓库尚未初始化探索树';
+        uDesc.textContent = `已在远端关联 ${S.repo}，但尚未检测到探索树状态；在远端运行 exptree init 或 exptree up 后将自动同步。`;
+      } else {
+        uTitle.textContent = '当前绑定的仓库尚无探索树';
+        uDesc.textContent = '直接在左侧对话框说明科研或优化目标，主 Agent 会自动初始化探索树并实时接入此面板；也可从右上角「···」解绑或更换仓库。';
+      }
+    }
   }
 
   function updateViewShell() {
@@ -416,18 +466,22 @@
     if (!showBoard) {
       setMenuOpen(false);
       $('focus-bar')?.classList.add('hidden');
+      $('offline-banner')?.classList.add('hidden');
 
       const draftNote = $('empty-draft-note');
       const bindBlock = $('existing-bind-block');
+      const remoteBlock = $('remote-bind-block');
       const sel = $('existing-repo-select');
       const watchText = $('empty-watch-text');
 
       if (!S.conv) {
         draftNote?.classList.remove('hidden');
         bindBlock?.classList.add('hidden');
+        remoteBlock?.classList.add('hidden');
         if (watchText) watchText.textContent = '等待左侧发起对话…';
       } else {
         draftNote?.classList.add('hidden');
+        remoteBlock?.classList.remove('hidden');
         if (watchText) watchText.textContent = '监听当前对话中 · 左侧发起探索后将自动接入';
         if (!S.repos.length) {
           bindBlock?.classList.add('hidden');
@@ -447,6 +501,18 @@
     }
 
     $('tree-title').textContent = repoShortName() || 'ExpTree';
+    const remoteBadge = $('remote-badge');
+    if (remoteBadge) {
+      const showRemoteBadge = Boolean(!S.standalone && !isPreview && S.mode === 'remote');
+      remoteBadge.classList.toggle('hidden', !showRemoteBadge);
+      if (showRemoteBadge) {
+        const hostLbl = S.remote?.ssh_host || (S.remote?.transport === 'http' ? 'HTTP 隧道' : '远端');
+        remoteBadge.innerHTML = `${ICON_SERVER}<span>${esc(hostLbl)}</span>`;
+        remoteBadge.title = S.remote?.transport === 'http'
+          ? `HTTP 隧道 (${S.remote.endpoint}) · ${S.boundRepo}`
+          : `SSH 直连 (${hostLbl}) · ${S.boundRepo}`;
+      }
+    }
     $('btn-tree-menu').classList.toggle('hidden', S.standalone || !S.conv);
 
     const previewEl = $('preview-banner');
@@ -458,11 +524,20 @@
       previewEl.classList.add('hidden');
     }
 
-    $('menu-meta-path').textContent = S.boundRepo || '当前未绑定仓库';
-    $('menu-meta-path').title = S.boundRepo || '';
+    if (S.mode === 'remote' && S.boundRepo) {
+      const prefix = S.remote?.ssh_host ? `${S.remote.ssh_host}:` : '';
+      $('menu-meta-path').textContent = `${prefix}${S.boundRepo}`;
+      $('menu-meta-path').title = S.remote?.transport === 'http'
+        ? `HTTP 隧道 ${S.remote.endpoint} -> ${S.boundRepo}`
+        : `SSH ${S.remote?.ssh_host || ''} -> ${S.boundRepo}`;
+    } else {
+      $('menu-meta-path').textContent = S.boundRepo || '当前未绑定仓库';
+      $('menu-meta-path').title = S.boundRepo || '';
+    }
     $('menu-meta-conv').textContent = S.conv ? `对话 ${S.conv.slice(0, 8)}…` : '独立模式';
     $('menu-unbind').classList.toggle('hidden', !S.bound);
     renderMenuRepoList();
+    updateOfflineBanner();
   }
 
   async function syncBinding(isBackgroundPoll = false) {
@@ -483,15 +558,23 @@
     S.repos = data.repos || [];
     S.bound = Boolean(data.bound);
     S.boundRepo = data.repo || '';
+    S.mode = data.mode || 'local';
+    S.remote = data.remote || null;
 
     if (S.previewRepo && S.previewRepo === S.boundRepo) {
       S.previewRepo = '';
     }
 
-    const nextRepo = (!S.standalone && S.previewRepo) ? S.previewRepo : (S.bound ? S.boundRepo : '');
+    const isPreviewing = Boolean(!S.standalone && S.previewRepo);
+    const nextRepo = isPreviewing ? S.previewRepo : (S.bound ? S.boundRepo : '');
+    const nextKey = nextRepo
+      ? (isPreviewing ? `local|${nextRepo}` : `${S.mode}|${S.remote?.endpoint || ''}|${S.remote?.ssh_host || ''}|${nextRepo}`)
+      : '';
+
     let repoChanged = false;
-    if (nextRepo !== S.repo) {
+    if (nextRepo !== S.repo || nextKey !== S.targetKey) {
       S.repo = nextRepo;
+      S.targetKey = nextKey;
       resetTreeState({ preserveDeepLink: Boolean(S.deepLinkedNode) });
       if (!S.selectedId && !S.previewRepo && data.focus?.selected_node_id) {
         S.selectedId = data.focus.selected_node_id;
@@ -522,12 +605,58 @@
     }
   }
 
+  async function bindRemote({ sshHost, endpoint, repo }) {
+    if (!S.conv) {
+      showToast('未检测到当前对话 ID');
+      return;
+    }
+    const cleanRepo = String(repo || '').trim();
+    const cleanHost = String(sshHost || '').trim();
+    const cleanEp = String(endpoint || '').trim();
+    if (!cleanRepo) {
+      showToast('请填写远端仓库路径');
+      return;
+    }
+    if (!cleanHost && !cleanEp) {
+      showToast('请填写 SSH 主机或 HTTP 隧道地址');
+      return;
+    }
+    try {
+      const q = new URLSearchParams({
+        conversationId: S.conv,
+        mode: 'remote',
+        sshHost: cleanHost,
+        endpoint: cleanEp,
+        repo: cleanRepo,
+      });
+      await apiGet(`/api/bind?${q.toString()}`);
+      S.previewRepo = '';
+      S.emptyRemoteOpen = false;
+      $('empty-remote-form')?.classList.add('hidden');
+      $('btn-toggle-remote-empty')?.setAttribute('aria-expanded', 'false');
+      setMenuOpen(false);
+      await syncBinding(false);
+      await pollState(true);
+      syncFocusBackend();
+      showToast('已连接并绑定远端实验树');
+    } catch (err) {
+      showToast(`连接失败：${err.message || err}`);
+    }
+  }
+
   async function pollState(force = false) {
     if (!S.repo) return;
     try {
       const etagParam = force ? '' : encodeURIComponent(S.etag);
-      const data = await apiGet(`/api/state?repo=${encodeURIComponent(S.repo)}&etag=${etagParam}`);
+      const convParam = S.conv ? `&conversationId=${encodeURIComponent(S.conv)}` : '';
+      const data = await apiGet(`/api/state?repo=${encodeURIComponent(S.repo)}&etag=${etagParam}${convParam}`);
       if (checkBuildReload(data.buildId)) return;
+
+      S.offline = Boolean(data.offline);
+      S.offlineReason = data.offlineReason || '';
+      if (data.cachedAt !== undefined) S.cachedAt = data.cachedAt || '';
+      updateOfflineBanner();
+
       if (data.unchanged && !force) return;
 
       const prevCount = S.knownNodeCount;
@@ -1532,6 +1661,12 @@
       return;
     }
 
+    if (d.offline) {
+      pillsEl.innerHTML = '';
+      filesEl.innerHTML = `<div class="empty-box"><div class="empty-title">远端连接已断开</div><p style="margin:4px 0 0;">当前为离线只读缓存模式，恢复远端连接后点击顶部「重试」即可加载代码变更。</p></div>`;
+      return;
+    }
+
     const prunedBannerHtml = d.isPruned ? `
       <div class="pruned-banner ${isViolation(S.tree.nodes[curId]) ? 'violation' : ''}">
         <strong>失败快照已保留</strong> · ${esc(humanizeAction(d.pruneDigest || '未达标'))}
@@ -1773,9 +1908,56 @@
 
   $('menu-toggle-rebind')?.addEventListener('click', () => {
     S.rebindListOpen = !S.rebindListOpen;
+    if (S.rebindListOpen) {
+      S.menuRemoteOpen = false;
+      $('menu-remote-form')?.classList.add('hidden');
+      $('menu-toggle-remote')?.setAttribute('aria-expanded', 'false');
+    }
     renderMenuRepoList();
   });
+  $('menu-toggle-remote')?.addEventListener('click', () => {
+    S.menuRemoteOpen = !S.menuRemoteOpen;
+    if (S.menuRemoteOpen) {
+      S.rebindListOpen = false;
+      renderMenuRepoList();
+      if (S.mode === 'remote' && S.remote) {
+        if ($('menu-remote-ssh') && !$('menu-remote-ssh').value) $('menu-remote-ssh').value = S.remote.ssh_host || '';
+        if ($('menu-remote-endpoint') && !$('menu-remote-endpoint').value) $('menu-remote-endpoint').value = S.remote.endpoint || '';
+        if ($('menu-remote-repo') && !$('menu-remote-repo').value) $('menu-remote-repo').value = S.remote.repo || '';
+      }
+    }
+    $('menu-remote-form')?.classList.toggle('hidden', !S.menuRemoteOpen);
+    $('menu-toggle-remote')?.setAttribute('aria-expanded', String(S.menuRemoteOpen));
+  });
+  $('btn-menu-bind-remote')?.addEventListener('click', () => {
+    bindRemote({
+      sshHost: $('menu-remote-ssh')?.value || '',
+      endpoint: $('menu-remote-endpoint')?.value || '',
+      repo: $('menu-remote-repo')?.value || '',
+    });
+  });
   $('menu-unbind')?.addEventListener('click', () => bindRepo(''));
+
+  $('btn-offline-retry')?.addEventListener('click', async () => {
+    await syncBinding(false);
+    await pollState(true);
+    if (S.selectedId) await ensureNodeDiffCached(S.selectedId, S.diffFromId);
+    renderAll();
+    showToast(S.offline ? '远端仍未就绪' : '已恢复远端连接');
+  });
+
+  $('btn-toggle-remote-empty')?.addEventListener('click', () => {
+    S.emptyRemoteOpen = !S.emptyRemoteOpen;
+    $('empty-remote-form')?.classList.toggle('hidden', !S.emptyRemoteOpen);
+    $('btn-toggle-remote-empty')?.setAttribute('aria-expanded', String(S.emptyRemoteOpen));
+  });
+  $('btn-bind-remote-empty')?.addEventListener('click', () => {
+    bindRemote({
+      sshHost: $('empty-remote-ssh')?.value || '',
+      endpoint: $('empty-remote-endpoint')?.value || '',
+      repo: $('empty-remote-repo')?.value || '',
+    });
+  });
 
   $('btn-preview-bind')?.addEventListener('click', () => bindRepo(S.previewRepo));
   $('btn-preview-back')?.addEventListener('click', async () => {

@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "exp-tree": {
-      "command": "etree",
+    "exptree": {
+      "command": "exptree",
       "args": ["mcp"]
     }
   }

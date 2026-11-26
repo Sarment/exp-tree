@@ -1,9 +1,9 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "exp-tree": {
+    "exptree": {
       "type": "local",
-      "command": ["etree", "mcp"],
+      "command": ["exptree", "mcp"],
       "enabled": true
     }
   }

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sarment/exp-tree/internal/eval"
-	"github.com/sarment/exp-tree/internal/gitops"
-	"github.com/sarment/exp-tree/internal/tree"
+	"github.com/sarment/exptree/internal/eval"
+	"github.com/sarment/exptree/internal/gitops"
+	"github.com/sarment/exptree/internal/tree"
 )
 
 // TestParallelWorktreesAndOrphanResume 验证：

@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sarment/exp-tree/internal/crossover"
-	"github.com/sarment/exp-tree/internal/eval"
-	"github.com/sarment/exp-tree/internal/gitops"
-	"github.com/sarment/exp-tree/internal/orchestrator"
-	"github.com/sarment/exp-tree/internal/tree"
-	"github.com/sarment/exp-tree/internal/webui"
+	"github.com/sarment/exptree/internal/crossover"
+	"github.com/sarment/exptree/internal/eval"
+	"github.com/sarment/exptree/internal/gitops"
+	"github.com/sarment/exptree/internal/orchestrator"
+	"github.com/sarment/exptree/internal/tree"
+	"github.com/sarment/exptree/internal/webui"
 )
 
 type Server struct {
@@ -104,15 +104,18 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSnapshot(w http.ResponseWriter, _ *http.Request) {
+	s.engine.Reload()
 	writeJSON(w, http.StatusOK, s.engine.Snapshot())
 }
 
 func (s *Server) handleASCII(w http.ResponseWriter, _ *http.Request) {
+	s.engine.Reload()
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte(s.engine.RenderASCII()))
 }
 
 func (s *Server) handleBrief(w http.ResponseWriter, r *http.Request) {
+	s.engine.Reload()
 	nodeID := r.URL.Query().Get("node_id")
 	writeJSON(w, http.StatusOK, map[string]string{
 		"brief": s.engine.CompileContextBrief(nodeID),

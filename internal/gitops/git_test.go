@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sarment/exp-tree/internal/tree"
+	"github.com/sarment/exptree/internal/tree"
 )
 
 // TestGitRollbackPreservesExpTreeState 验证剪枝执行 `git reset --hard` 回退失败代码时，

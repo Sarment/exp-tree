@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sarment/exp-tree/internal/crossover"
-	"github.com/sarment/exp-tree/internal/eval"
-	"github.com/sarment/exp-tree/internal/gitops"
-	"github.com/sarment/exp-tree/internal/tree"
+	"github.com/sarment/exptree/internal/crossover"
+	"github.com/sarment/exptree/internal/eval"
+	"github.com/sarment/exptree/internal/gitops"
+	"github.com/sarment/exptree/internal/tree"
 )
 
 // StdioServer 实现标准 MCP (JSON-RPC 2.0 over stdio)。

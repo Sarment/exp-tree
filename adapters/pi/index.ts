@@ -5,14 +5,16 @@ import { fileURLToPath } from "node:url";
 
 const EXT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(EXT_DIR, "../..");
-const LOCAL_BIN = path.join(ROOT_DIR, "bin/etree");
-const ETREE_BIN = process.env.ETREE_BIN ?? (existsSync(LOCAL_BIN) ? LOCAL_BIN : "etree");
-const SKILL_DIR = path.join(ROOT_DIR, "skills/autoresearch-tree");
+const LOCAL_BIN = existsSync(path.join(ROOT_DIR, "bin/exptree"))
+  ? path.join(ROOT_DIR, "bin/exptree")
+  : path.join(ROOT_DIR, "bin/etree");
+const ETREE_BIN = process.env.ETREE_BIN ?? (existsSync(LOCAL_BIN) ? LOCAL_BIN : "exptree");
+const SKILL_DIR = path.join(ROOT_DIR, "skills/exptree");
 const DEFAULT_PORT = process.env.ETREE_PORT ?? "7421";
 const ENDPOINT = process.env.ETREE_URL ?? `http://127.0.0.1:${DEFAULT_PORT}`;
 
 /**
- * 自动确保本地 `etree serve` 守护进程已就绪（零手动起终端负担！）
+ * 自动确保本地 `exptree serve` 守护进程已就绪（零手动起终端负担！）
  */
 async function ensureDaemon(cwd: string): Promise<boolean> {
   try {
@@ -49,7 +51,7 @@ async function refreshFooterStatus(ctx: any) {
     if (!r.ok) return;
     const state = (await r.json()) as any;
     if (!state?.root_id || !state?.nodes) {
-      ctx.ui.setStatus("exp-tree", "🌿 ExpTree: idle (/etree init)");
+      ctx.ui.setStatus("exptree", "🌿 ExpTree: idle (/exptree init)");
       return;
     }
     const active = state.nodes[state.active_node_id];
@@ -57,7 +59,7 @@ async function refreshFooterStatus(ctx: any) {
     const bestScore =
       best?.primary_score !== undefined ? `${state.metric_name}=${best.primary_score.toFixed(2)}` : "-";
     ctx.ui.setStatus(
-      "exp-tree",
+      "exptree",
       `🌿 ExpTree: ${active?.id ?? "-"} [${active?.status ?? "-"}] | ★ ${state.best_node_id ?? "-"} (${bestScore})`
     );
   } catch {
@@ -66,12 +68,12 @@ async function refreshFooterStatus(ctx: any) {
 }
 
 /**
- * 面向本机 `pi v0.85.1` 的完整原生扩展：
- * 1. 自动发现 `autoresearch-tree` Skill；
- * 2. 自动静默拉起 `etree serve` 守护进程并在底部状态栏实时展示当前树分支与最高分；
+ * 面向本机 Pi 的完整原生扩展：
+ * 1. 自动发现 `exptree` Skill；
+ * 2. 自动静默拉起 `exptree serve` 守护进程并在底部状态栏实时展示当前树分支与最高分；
  * 3. 每轮自动将 <150 Token 同级剪枝墓志铭注入 System Prompt；
  * 4. 后置自动记录步骤进度并实时刷新底部状态栏；
- * 5. 注册全套 LLM 可调用工具 (`etree_init`, `etree_brief`, `etree_branch`, `etree_eval`, `etree_converge`, `etree_recommend`) 与 `/etree` 快捷命令。
+ * 5. 注册全套 LLM 可调用工具 (`etree_init`, `etree_brief`, `etree_branch`, `etree_eval`, `etree_converge`, `etree_recommend`) 与 `/exptree` 快捷命令。
  */
 export default function registerExpTreePiExtension(pi: any) {
   // 1. 自动挂载科研树方法论 Skill
@@ -115,19 +117,24 @@ export default function registerExpTreePiExtension(pi: any) {
     return undefined;
   });
 
-  // 6. 注册 `/etree` 交互命令（支持 `/etree`, `/etree web`）
+  // 6. 注册 `/exptree`（及兼容别名 `/etree`）交互命令
+  const cmdHandler = async (args: string, ctx: any) => {
+    await ensureDaemon(ctx.cwd);
+    if (args.trim() === "web") {
+      await pi.exec("open", [ENDPOINT]);
+      ctx.ui.notify(`已在浏览器打开 ExpTree 实时看板: ${ENDPOINT}`, "info");
+      return;
+    }
+    const res = await pi.exec(ETREE_BIN, ["view", "-repo", ctx.cwd]);
+    ctx.ui.notify(res.stdout || "当前仓库尚未初始化探索树，可直接让 Pi 调用 etree_init。", "info");
+  };
+  pi.registerCommand("exptree", {
+    description: "查看多叉科研探索树或打开本地可视化看板 (/exptree | /exptree web)",
+    handler: cmdHandler,
+  });
   pi.registerCommand("etree", {
-    description: "查看多叉科研探索树或打开本地可视化看板 (/etree | /etree web)",
-    handler: async (args: string, ctx: any) => {
-      await ensureDaemon(ctx.cwd);
-      if (args.trim() === "web") {
-        await pi.exec("open", [ENDPOINT]);
-        ctx.ui.notify(`已在浏览器打开 ExpTree 实时看板: ${ENDPOINT}`, "info");
-        return;
-      }
-      const res = await pi.exec(ETREE_BIN, ["view", "-repo", ctx.cwd]);
-      ctx.ui.notify(res.stdout || "当前仓库尚未初始化探索树，可直接让 Pi 调用 etree_init。", "info");
-    },
+    description: "Alias for /exptree",
+    handler: cmdHandler,
   });
 
   // 7. 注册全套 Pi 原生 LLM 工具（带 promptSnippet 确保注入默认系统提示词！）

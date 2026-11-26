@@ -5,24 +5,26 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PREFIX="${PREFIX:-$HOME/.local}"
 BINDIR="${BINDIR:-$PREFIX/bin}"
 
-echo "[exp-tree] Building etree binary..."
+echo "[exptree] Building exptree binary..."
 cd "$ROOT_DIR"
-CGO_ENABLED=0 go build -o bin/etree ./cmd/etree
+CGO_ENABLED=0 go build -o bin/exptree ./cmd/exptree
 
 mkdir -p "$BINDIR"
-cp bin/etree "$BINDIR/etree"
-chmod +x "$BINDIR/etree"
+cp bin/exptree "$BINDIR/exptree"
+chmod +x "$BINDIR/exptree"
+ln -sf exptree "$BINDIR/etree"
 
-echo "[exp-tree] Installed: $BINDIR/etree"
-if ! command -v etree >/dev/null 2>&1; then
-  echo "[exp-tree] Note: add $BINDIR to your PATH, e.g.:"
+echo "[exptree] Installed: $BINDIR/exptree (symlink alias: $BINDIR/etree)"
+if ! command -v exptree >/dev/null 2>&1; then
+  echo "[exptree] Note: add $BINDIR to your PATH, e.g.:"
   echo "  export PATH=\"$BINDIR:\$PATH\""
 fi
 
 echo ""
 echo "Quick backend setup commands:"
-echo "  etree setup codex"
-echo "  etree setup opencode"
-echo "  etree setup pi"
-echo "  etree setup dsh"
-echo "  etree setup antigravity"
+echo "  exptree setup codex"
+echo "  exptree setup opencode"
+echo "  exptree setup pi"
+echo "  exptree setup dsh"
+echo "  exptree setup antigravity"
+echo "  exptree setup remote"

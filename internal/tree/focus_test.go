@@ -167,3 +167,111 @@ func TestCrossBackendSessionIsolation(t *testing.T) {
 		t.Fatalf("expected invalid path-like session IDs to be rejected")
 	}
 }
+
+func TestRemoteConversationBinding(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ANTIGRAVITY_APP_DATA_DIR", tmp)
+	t.Setenv("ETREE_HOME", "")
+
+	convID := "cccccccc-1111-2222-3333-444444444444"
+
+	// Reject SSH option-injection hostnames and invalid URLs
+	if _, err := BindRemoteConversation(convID, RemoteTarget{
+		SSHHost: "-oProxyCommand=evil",
+		Repo:    "/data/exp/proj",
+	}); err == nil {
+		t.Fatalf("expected ssh option injection host to fail validation")
+	}
+	if _, err := BindRemoteConversation(convID, RemoteTarget{
+		Endpoint: "ftp://bad.host",
+		Repo:     "/data/exp/proj",
+	}); err == nil {
+		t.Fatalf("expected non-http endpoint to fail validation")
+	}
+
+	// Bind over HTTP tunnel + ssh label
+	st, err := BindRemoteConversation(convID, RemoteTarget{
+		Endpoint: "http://127.0.0.1:17421/",
+		SSHHost:  "gpu-a100",
+		Repo:     "/data/exp/proj",
+	})
+	if err != nil {
+		t.Fatalf("BindRemoteConversation HTTP failed: %v", err)
+	}
+	if st.Mode != "remote" || st.Remote == nil || st.Remote.Transport != "http" || st.Remote.Endpoint != "http://127.0.0.1:17421" {
+		t.Fatalf("unexpected HTTP remote binding state: %+v", st)
+	}
+
+	// Simulate UI selection and rebind to the same remote target -> selection preserved
+	st.SelectedNodeID = "node-3"
+	if err := WriteConversationFocus(convID, *st); err != nil {
+		t.Fatal(err)
+	}
+	stSame, err := BindRemoteConversation(convID, RemoteTarget{
+		Endpoint: "http://127.0.0.1:17421",
+		SSHHost:  "gpu-a100",
+		Repo:     "/data/exp/proj",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stSame.SelectedNodeID != "node-3" {
+		t.Fatalf("expected selection preserved on identical remote rebind, got %q", stSame.SelectedNodeID)
+	}
+
+	// Rebind to SSH direct transport -> resets selection cleanly
+	stSSH, err := BindRemoteConversation(convID, RemoteTarget{
+		SSHHost: "gpu-a100",
+		Repo:    "/data/exp/proj2",
+	})
+	if err != nil {
+		t.Fatalf("BindRemoteConversation SSH failed: %v", err)
+	}
+	if stSSH.Remote.Transport != "ssh" || stSSH.SelectedNodeID != "" {
+		t.Fatalf("expected ssh transport with reset selection, got %+v", stSSH)
+	}
+
+	if err := UnbindConversation(convID); err != nil {
+		t.Fatalf("UnbindConversation failed: %v", err)
+	}
+	if ReadConversationFocus(convID) != nil {
+		t.Fatalf("expected nil after remote unbind")
+	}
+}
+
+func TestEngineReload(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	engA, err := OpenEngine(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := 10.0
+	if _, err := engA.InitRoot("Test reload", "score", true, "sha0", &base); err != nil {
+		t.Fatal(err)
+	}
+
+	engB, err := OpenEngine(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if engB.Reload() {
+		t.Fatalf("expected Reload() to return false when disk state unchanged")
+	}
+
+	// Mutate disk via engA
+	b1, err := engA.Branch(BranchInput{ParentID: "node-0", AgentID: "w1", Hypothesis: "faster pass"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engA.Validate(b1.ID, 25.0, map[string]float64{"score": 25.0}, "sha1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if !engB.Reload() {
+		t.Fatalf("expected Reload() to detect external mutation")
+	}
+	snap := engB.Snapshot()
+	if snap.BestNodeID != b1.ID || len(snap.Nodes) != 2 {
+		t.Fatalf("expected engB snapshot updated after Reload(), got best=%s nodes=%d", snap.BestNodeID, len(snap.Nodes))
+	}
+}

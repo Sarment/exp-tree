@@ -1,8 +1,8 @@
 {
-  "name": "exp-tree",
-  "displayName": "ExpTree AutoResearch",
+  "name": "exptree",
+  "displayName": "ExpTree",
   "version": "0.3.0",
-  "description": "Hub-and-spoke Super-Agent AutoResearch engine with Pareto frontier, preserved failed commits, and synchronized ExpTree sidebar.",
+  "description": "Hub-and-spoke Super-Agent AutoResearch engine with Pareto frontier, preserved failed commits, remote server support, and synchronized ExpTree sidebar.",
   "suggestedPrompts": [
     "作为主控导师，针对某个科学/算法问题开启多分支探索，具体调研与实验全部派给子 Agent",
     "解释我在右侧 ExpTree 面板当前选中的节点改了什么、为什么得到这个指标",
