@@ -24,7 +24,7 @@ Follow these four strict formatting and clarity rules across every tree field an
 3. **Action-First Engineering Prose (Zero Jargon Stacking)**:
    - Never stack >2 obscure modifiers into invented paper-ese names.
    - Explain any node's improvement in 3 clear parts: **(1) Baseline pain point -> (2) Concrete mechanism (input -> action -> output) -> (3) Measured metric change**.
-   - Standard technical terms (`BFS`, `IDF`, `Pareto frontier`, `KV-Cache`) are welcome when immediately followed by half a sentence stating what they concretely do here.
+   - Standard technical terms (`BFS`, `IDF`, `KV-Cache`) are welcome when immediately followed by half a sentence stating what they concretely do here. For multi-objective results, use intuitive terms like 「领先方案」「多目标权衡」「全面弱于」 rather than academic terms like 「帕累托前沿 / 被支配」.
 4. **Contrast Few-Shot (Follow Strictly)**:
    - ❌ **Bad**: `[NOVEL_CLEAR H2] Supermodular Bridge-Bundle Set-Union Precedence Knapsack over Bipartite Rare-IDF Span Hypergraph` / “通过二部稀疏符号超图与集并先序背包实现超模桥接打包”
    - ✅ **Good**: `按稀有符号做 4 跳关联打包，避免丢失多跳因果线索` / “以当前问题里的稀有代码标识符（函数名/变量名/报错词）为起点，沿共享符号最多追溯 4 跳，把整条因果链打包一起保留，防止留头尾却丢中间推理。”

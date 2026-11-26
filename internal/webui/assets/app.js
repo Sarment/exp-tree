@@ -157,9 +157,9 @@
     const isMulti = (S.tree?.objectives || []).length >= 2;
     const onFront = isMulti && pFront.includes(n.id);
     switch (n.status) {
-      case 'CONVERGED': return `<span class="badge conv">${onFront ? '融合 · 前沿' : '已融合'}</span>`;
+      case 'CONVERGED': return `<span class="badge conv">${onFront ? '融合 · 领先' : '已融合'}</span>`;
       case 'VALIDATED':
-        if (onFront) return '<span class="badge pass">前沿</span>';
+        if (onFront) return '<span class="badge pass">领先</span>';
         if (!isMulti && n.id === bestId) return '<span class="badge pass">最优</span>';
         if (n.id === S.tree?.root_id) return '<span class="badge muted">基线</span>';
         return '<span class="badge pass-soft">已晋升</span>';
@@ -207,7 +207,7 @@
     const str = String(a || '');
     let m;
     if ((m = /^Pareto synergy converged.*?\((.*)\)\s*$/.exec(str))) return `融合成功 · ${prettyKV(m[1])}`;
-    if ((m = /^Pareto advance \((.*)\)\s*$/.exec(str))) return `推进帕累托前沿 · ${prettyKV(m[1])}`;
+    if ((m = /^Pareto advance \((.*)\)\s*$/.exec(str))) return `刷新领先指标 · ${prettyKV(m[1])}`;
     if ((m = /^Multi-objective validated \((.*)\)\s*$/.exec(str))) return `验证通过 · ${prettyKV(m[1])}`;
     if ((m = /^Baseline measured(?: \((.*)\)|:\s*(.*))\s*$/.exec(str))) return `测得基线 · ${prettyKV(m[1] || m[2])}`;
     if ((m = /^Benchmark improved:\s*(.*)$/.exec(str))) return `指标提升 · ${prettyKV(m[1])}`;
@@ -215,9 +215,9 @@
     if ((m = /HARD_CONSTRAINT_VIOLATED\]\s*(\S+)=(\S+) violates hard gate (\S+) (\S+)/.exec(str))) return `违反约束 · ${m[1]} ${fmtNum(Number(m[2]))}，要求 ${opSym(m[3])} ${fmtNum(Number(m[4]))}`;
     if ((m = /HARD_CONSTRAINT_VIOLATED\]\s*missing or invalid required metric "?([^"\s]+)"?/.exec(str))) return `违反约束 · 缺少指标 ${m[1]}`;
     if ((m = /^Pre-merge probe done \(textual_conflict=(true|false)\)/.exec(str))) return m[1] === 'true' ? '合并预检 · 有文本冲突，转入语义融合' : '合并预检 · 无文本冲突';
-    if ((m = /^Pareto-dominated by (\S+): got \((.*?)\)/.exec(str))) return `被 ${m[1]} 支配 · ${prettyKV(m[2])}`;
-    if ((m = /^Convergence dominated by parent (\S+)/.exec(str))) return `融合未达标 · 被父节点 ${m[1]} 支配`;
-    if ((m = /^Convergence failed to reach Pareto frontier: \((.*)\)/.exec(str))) return `融合未进入前沿 · ${prettyKV(m[1])}`;
+    if ((m = /^Pareto-dominated by (\S+): got \((.*?)\)/.exec(str))) return `全面弱于 ${m[1]} · ${prettyKV(m[2])}`;
+    if ((m = /^Convergence dominated by parent (\S+)/.exec(str))) return `融合未达标 · 全面弱于父节点 ${m[1]}`;
+    if ((m = /^Convergence failed to reach Pareto frontier: \((.*)\)/.exec(str))) return `融合未刷新领先指标 · ${prettyKV(m[1])}`;
     if ((m = /^Convergence did not improve.*?\((.*)\)/.exec(str))) return `融合无协同增益 · ${prettyKV(m[1])}`;
     if ((m = /AssertionError:\s*(.*)$/.exec(str))) return `正确性校验失败 · ${m[1]}`;
     if ((m = /^\[SMOKE_GATE_FAILED\]\s*(.*)$/.exec(str))) return `冒烟测试失败 · ${m[1]}`;
@@ -1049,7 +1049,7 @@
     return `
       <div class="card">
         <div class="card-head">
-          <span class="card-title">帕累托前沿</span>
+          <span class="card-title">多目标权衡</span>
           <span class="card-note">越靠右上越优</span>
         </div>
         <svg class="pareto-svg" viewBox="0 0 ${W} ${H}">
@@ -1810,7 +1810,7 @@
     const succOnly = Math.max(0, succ - counts.conv);
 
     const frontRow = isMulti && pFrontIds.length ? `
-      <div class="kv-row"><span class="kv-key">前沿</span><span class="kv-val">${pFrontIds.map((id) => `<button type="button" class="node-link ${S.selectedId === id ? 'on' : ''}" data-jump-node="${esc(id)}">${esc(id)}</button>`).join('<span class="kv-sep">·</span>')}</span></div>` : '';
+      <div class="kv-row"><span class="kv-key">领先</span><span class="kv-val">${pFrontIds.map((id) => `<button type="button" class="node-link ${S.selectedId === id ? 'on' : ''}" data-jump-node="${esc(id)}">${esc(id)}</button>`).join('<span class="kv-sep">·</span>')}</span></div>` : '';
     const consRow = cons.length ? `
       <div class="kv-row"><span class="kv-key">约束</span><span class="kv-val mono">${esc(cons.map((c) => `${c.metric} ${opSym(c.op)} ${fmtNum(c.threshold)}`).join(' · '))}</span></div>` : '';
     const heroSingle = !isMulti ? `

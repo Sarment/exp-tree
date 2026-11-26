@@ -503,7 +503,7 @@ func (e *Engine) CompileContextBrief(nodeID string) string {
 	}
 
 	if len(e.state.ParetoFrontIDs) > 0 && len(e.state.Objectives) >= 2 {
-		fmt.Fprintf(&b, "- ★ 当前帕累托前沿 (%d 个互补最优解): `%s`\n",
+		fmt.Fprintf(&b, "- ★ 当前领先方案 (%d 个互补最优解): `%s`\n",
 			len(e.state.ParetoFrontIDs), strings.Join(e.state.ParetoFrontIDs, "`, `"))
 		for _, fid := range e.state.ParetoFrontIDs {
 			if fn, ok := e.state.Nodes[fid]; ok {
@@ -512,7 +512,7 @@ func (e *Engine) CompileContextBrief(nodeID string) string {
 			}
 		}
 		if len(e.state.ParetoFrontIDs) >= 2 {
-			fmt.Fprintf(&b, "- 💡 帕累托互补融合建议: 前沿存在多个偏科顶点 (`%s`)，可调用 `etree_converge` 将它们语义融合，冲击右上角全优前沿！\n",
+			fmt.Fprintf(&b, "- 💡 互补融合建议: 当前存在多个各有优势的领先分支 (`%s`)，可调用 `etree_converge` 将它们合并优化，争取全面超越单一分支！\n",
 				strings.Join(e.state.ParetoFrontIDs, ","))
 		}
 	} else if best, ok := e.state.Nodes[e.state.BestNodeID]; ok && best.PrimaryScore != nil {
