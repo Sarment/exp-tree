@@ -381,7 +381,7 @@ func (s *StdioServer) callTool(ctx context.Context, name string, rawArgs json.Ra
 			NodeID:       args.NodeID,
 			Command:      cmd,
 			MetricRegex:  args.MetricRegex,
-			Timeout:      60 * time.Second,
+			Timeout:      0,
 			AutoRollback: true,
 		})
 		if err != nil {

@@ -298,7 +298,7 @@ func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 	if in.AutoRollback != nil {
 		rollback = *in.AutoRollback
 	}
-	timeout := 60 * time.Second
+	var timeout time.Duration
 	if in.TimeoutSeconds > 0 {
 		timeout = time.Duration(in.TimeoutSeconds) * time.Second
 	}

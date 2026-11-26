@@ -216,7 +216,7 @@ func (c *Coordinator) ReconcileOrphans(ctx context.Context, evalCmd string) ([]R
 				NodeID:       n.ID,
 				WorkDir:      n.WorktreePath,
 				Command:      evalCmd,
-				Timeout:      60 * time.Second,
+				Timeout:      0,
 				AutoRollback: false,
 			})
 			_ = gitops.RemoveWorktree(ctx, c.repoDir, n.ID)

@@ -8,7 +8,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -38,6 +40,10 @@ func main() {
 		runBranch(os.Args[2:])
 	case "eval":
 		runEval(os.Args[2:])
+	case "record":
+		runRecord(os.Args[2:])
+	case "step":
+		runStep(os.Args[2:])
 	case "crossover", "synthesize", "converge":
 		runCrossover(os.Args[2:])
 	case "resume":
@@ -161,6 +167,8 @@ func runUp(args []string) {
 	minimize := fs.Bool("minimize", false, "True if lower metric is better")
 	objectives := fs.String("objectives", "", "Multi-objective spec, e.g. 'pos_err:min,orbits_per_sec:max'")
 	constraints := fs.String("constraints", "", "Hard scientific gates, e.g. 'energy_drift<=0.001,ang_mom_drift<=1e-6'")
+	timeout := fs.Duration("timeout", 0, "Optional baseline evaluation timeout (0 = unlimited)")
+	detach := fs.Bool("detach", false, "Run baseline evaluation in detached background process")
 	addr := fs.String("addr", "127.0.0.1:7421", "Web console listen address")
 	serve := fs.Bool("serve", true, "Keep HTTP & Web UI server running after initialization")
 	_ = fs.Parse(args)
@@ -203,18 +211,30 @@ func runUp(args []string) {
 		}
 
 		if *evalCmd != "" {
-			fmt.Printf("[exptree] auto-measuring baseline via %q ...\n", *evalCmd)
-			runner := eval.NewRunner(eng, *repo)
-			res, err := runner.Run(context.Background(), eval.RunInput{
-				NodeID:       root.ID,
-				Command:      *evalCmd,
-				Timeout:      60 * time.Second,
-				AutoRollback: false,
-			})
-			if err != nil {
-				log.Fatalf("baseline eval failed: %v", err)
+			if *detach {
+				if cid := tree.ResolveConversationID(*conv); cid != "" {
+					_, _ = tree.BindConversation(cid, *repo)
+				}
+				if err := launchDetachedEval(eng, *repo, *statePath, root.ID, *evalCmd, "", *timeout, false); err != nil {
+					log.Fatalf("detach baseline eval failed: %v", err)
+				}
+				if !*serve {
+					return
+				}
+			} else {
+				fmt.Printf("[exptree] auto-measuring baseline via %q ...\n", *evalCmd)
+				runner := eval.NewRunner(eng, *repo)
+				res, err := runner.Run(context.Background(), eval.RunInput{
+					NodeID:       root.ID,
+					Command:      *evalCmd,
+					Timeout:      *timeout,
+					AutoRollback: false,
+				})
+				if err != nil {
+					log.Fatalf("baseline eval failed: %v", err)
+				}
+				printEvalSummary(res)
 			}
-			printEvalSummary(res)
 		}
 	}
 
@@ -332,7 +352,8 @@ func runEval(args []string) {
 	nodeID := fs.String("node", "", "Node ID to evaluate (defaults to active)")
 	cmdStr := fs.String("cmd", "", "Benchmark shell command to execute")
 	regex := fs.String("regex", "", "Regex with capture group for metric float")
-	timeout := fs.Duration("timeout", 60*time.Second, "Execution timeout budget")
+	timeout := fs.Duration("timeout", 0, "Optional execution timeout budget (0 = unlimited)")
+	detach := fs.Bool("detach", false, "Run evaluation in detached background process (survives SSH/terminal close)")
 	rollback := fs.Bool("rollback", true, "Auto git rollback to parent on failure/regression")
 	_ = fs.Parse(args)
 
@@ -348,6 +369,16 @@ func runEval(args []string) {
 	if command == "" {
 		log.Fatal("-cmd is required (or set -eval-cmd during init)")
 	}
+	if *detach {
+		targetNodeID := strings.TrimSpace(*nodeID)
+		if targetNodeID == "" {
+			targetNodeID = eng.Snapshot().ActiveNodeID
+		}
+		if err := launchDetachedEval(eng, targetRepo, *statePath, targetNodeID, command, *regex, *timeout, *rollback); err != nil {
+			log.Fatalf("detach eval failed: %v", err)
+		}
+		return
+	}
 	runner := eval.NewRunner(eng, targetRepo)
 	res, err := runner.Run(context.Background(), eval.RunInput{
 		NodeID:       *nodeID,
@@ -358,6 +389,143 @@ func runEval(args []string) {
 	})
 	if err != nil {
 		log.Fatalf("eval error: %v", err)
+	}
+	printEvalSummary(res)
+}
+
+func launchDetachedEval(eng *tree.Engine, targetRepo, stateOverride, nodeID, command, regex string, timeout time.Duration, rollback bool) error {
+	if nodeID == "" {
+		return fmt.Errorf("no target node ID resolved")
+	}
+	if _, err := eng.GetNode(nodeID); err != nil {
+		return err
+	}
+	absRepo := targetRepo
+	if p, err := filepath.Abs(targetRepo); err == nil {
+		absRepo = p
+	}
+	resolvedState := resolveStatePath(absRepo, stateOverride)
+	logDir := filepath.Join(filepath.Dir(resolvedState), "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return err
+	}
+	logPath := filepath.Join(logDir, nodeID+".log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		_ = logFile.Close()
+		return err
+	}
+	childArgs := []string{
+		"eval",
+		"-repo", absRepo,
+		"-node", nodeID,
+		"-cmd", command,
+		fmt.Sprintf("-rollback=%v", rollback),
+	}
+	if stateOverride != "" {
+		childArgs = append(childArgs, "-state", stateOverride)
+	}
+	if regex != "" {
+		childArgs = append(childArgs, "-regex", regex)
+	}
+	if timeout > 0 {
+		childArgs = append(childArgs, "-timeout", timeout.String())
+	}
+
+	cmd := exec.Command(exePath, childArgs...)
+	cmd.Dir = absRepo
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.Stdin = nil
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		_ = logFile.Close()
+		return err
+	}
+	_ = logFile.Close()
+	pid := cmd.Process.Pid
+	_ = cmd.Process.Release()
+
+	_ = eng.AttachWorker(nodeID, pid, "")
+	_, _ = eng.RecordStep(nodeID, fmt.Sprintf("已提交后台评测作业 (PID=%d, 日志=%s)", pid, logPath), false)
+	fmt.Printf("[exptree] 🚀 DETACHED EVAL %s | pid=%d | log=%s\n", nodeID, pid, logPath)
+	return nil
+}
+
+func runStep(args []string) {
+	fs := flag.NewFlagSet("step", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Target repository directory")
+	conv := fs.String("conv", "", "Session / conversation ID (defaults to ANTIGRAVITY_CONVERSATION_ID)")
+	statePath := fs.String("state", "", "Optional custom state file path")
+	nodeID := fs.String("node", "", "Node ID (defaults to active)")
+	msg := fs.String("msg", "", "Progress or verified step description")
+	verified := fs.Bool("verified", false, "True to record a discrete verified step instead of updating live progress")
+	_ = fs.Parse(args)
+
+	if strings.TrimSpace(*msg) == "" {
+		log.Fatal("-msg is required")
+	}
+	targetRepo := resolveRepoForCLI(*repo, *conv, isFlagSet(fs, "repo"))
+	eng, err := tree.OpenEngine(resolveStatePath(targetRepo, *statePath))
+	if err != nil {
+		log.Fatalf("open engine: %v", err)
+	}
+	var node *tree.ExpNode
+	if *verified {
+		node, err = eng.RecordStep(*nodeID, *msg, true)
+	} else {
+		node, err = eng.RecordProgress(*nodeID, *msg)
+	}
+	if err != nil {
+		log.Fatalf("step failed: %v", err)
+	}
+	fmt.Printf("[exptree] step updated on %s\n", node.ID)
+}
+
+func runRecord(args []string) {
+	fs := flag.NewFlagSet("record", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Target repository directory")
+	conv := fs.String("conv", "", "Session / conversation ID (defaults to ANTIGRAVITY_CONVERSATION_ID)")
+	statePath := fs.String("state", "", "Optional custom state file path")
+	nodeID := fs.String("node", "", "Node ID to record metrics for (defaults to active)")
+	metricsFlag := fs.String("metrics", "", "Comma-separated key=value metrics, e.g. 'solved=42,conflicts=0'")
+	fromFile := fs.String("from-file", "", "Optional log/stdout file produced by external evaluation job")
+	regex := fs.String("regex", "", "Optional regex with capture group for metric float")
+	rollback := fs.Bool("rollback", false, "Auto git rollback to parent on failure/regression")
+	_ = fs.Parse(args)
+
+	var rawOut string
+	if strings.TrimSpace(*fromFile) != "" {
+		b, err := os.ReadFile(*fromFile)
+		if err != nil {
+			log.Fatalf("read -from-file failed: %v", err)
+		}
+		rawOut = string(b)
+	} else if strings.TrimSpace(*metricsFlag) != "" {
+		rawOut = strings.ReplaceAll(*metricsFlag, ",", "\n")
+	} else {
+		log.Fatal("either -metrics or -from-file is required")
+	}
+
+	targetRepo := resolveRepoForCLI(*repo, *conv, isFlagSet(fs, "repo"))
+	eng, err := tree.OpenEngine(resolveStatePath(targetRepo, *statePath))
+	if err != nil {
+		log.Fatalf("open engine: %v", err)
+	}
+	runner := eval.NewRunner(eng, targetRepo)
+	res, err := runner.GradeAndApply(context.Background(), eval.RecordInput{
+		NodeID:       *nodeID,
+		RawOutput:    rawOut,
+		MetricRegex:  *regex,
+		AutoRollback: *rollback,
+	})
+	if err != nil {
+		log.Fatalf("record error: %v", err)
 	}
 	printEvalSummary(res)
 }
@@ -600,5 +768,5 @@ func shortSHA(sha string) string {
 }
 
 func printUsage() {
-	fmt.Println("Usage: exptree <up|init|branch|eval|crossover|resume|recommend|view|brief|bind|focus|setup|mcp|serve> [flags]")
+	fmt.Println("Usage: exptree <up|init|branch|eval|record|step|crossover|resume|recommend|view|brief|bind|focus|setup|mcp|serve> [flags]")
 }

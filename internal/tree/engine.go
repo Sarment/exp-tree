@@ -206,11 +206,16 @@ func (e *Engine) recomputeParetoLocked() {
 func (e *Engine) AttachWorker(nodeID string, pid int, worktreePath string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	unlock := e.acquireFileLockReload()
+	defer unlock()
+
 	n, ok := e.state.Nodes[nodeID]
 	if !ok {
 		return ErrNodeNotFound
 	}
-	n.WorkerPID = pid
+	if n.Status == NodeExploring || n.Status == NodeSynthesizing {
+		n.WorkerPID = pid
+	}
 	if worktreePath != "" {
 		n.WorktreePath = worktreePath
 	}
@@ -315,6 +320,52 @@ func (e *Engine) RecordStep(nodeID, action string, verified bool) (*ExpNode, err
 	return copyNode(n), e.saveLocked()
 }
 
+// RecordProgress updates a node's live progress note in-place so multi-hour runs
+// stream status without bloating state.json with hundreds of step entries.
+func (e *Engine) RecordProgress(nodeID, msg string) (*ExpNode, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	unlock := e.acquireFileLockReload()
+	defer unlock()
+
+	if nodeID == "" {
+		nodeID = e.state.ActiveNodeID
+	}
+	n, ok := e.state.Nodes[nodeID]
+	if !ok {
+		return nil, ErrNodeNotFound
+	}
+	clean := strings.TrimSpace(msg)
+	if clean == "" {
+		return copyNode(n), nil
+	}
+	action := clean
+	if !strings.HasPrefix(action, "进度:") {
+		action = "进度: " + clean
+	}
+	if runes := []rune(action); len(runes) > 160 {
+		action = string(runes[:160]) + "…"
+	}
+	now := time.Now()
+	if len(n.Steps) > 0 {
+		last := &n.Steps[len(n.Steps)-1]
+		if !last.Verified && strings.HasPrefix(last.Action, "进度:") {
+			last.Action = action
+			last.Timestamp = now
+			n.UpdatedAt = now
+			return copyNode(n), e.saveLocked()
+		}
+	}
+	n.Steps = append(n.Steps, StepLog{
+		Index:     len(n.Steps) + 1,
+		Action:    action,
+		Verified:  false,
+		Timestamp: now,
+	})
+	n.UpdatedAt = now
+	return copyNode(n), e.saveLocked()
+}
+
 // Validate 标记节点验证通过：单父分支置为 VALIDATED，多父合流节点自动置为 CONVERGED（多合一收敛态）！
 func (e *Engine) Validate(nodeID string, primaryScore float64, metrics map[string]float64, gitCommit string) (*ExpNode, error) {
 	e.mu.Lock()
@@ -332,6 +383,8 @@ func (e *Engine) Validate(nodeID string, primaryScore float64, metrics map[strin
 	if gitCommit != "" {
 		n.GitCommit = gitCommit
 	}
+	n.WorkerPID = 0
+	n.PruneDigest = ""
 	if n.IsConvergenceNode() {
 		n.Status = NodeConverged
 	} else {
@@ -341,8 +394,8 @@ func (e *Engine) Validate(nodeID string, primaryScore float64, metrics map[strin
 
 	if len(e.state.Objectives) >= 2 {
 		e.recomputeParetoLocked()
-	} else if e.isBetterThanBestLocked(primaryScore) {
-		e.state.BestNodeID = n.ID
+	} else {
+		e.recomputeBestLocked()
 	}
 	return copyNode(n), e.saveLocked()
 }
@@ -371,6 +424,7 @@ func (e *Engine) PruneWithMetrics(nodeID, digest string, score *float64, metrics
 	}
 
 	n.Status = NodePruned
+	n.WorkerPID = 0
 	n.PruneDigest = digest
 	if failedCommit != "" {
 		n.GitCommit = failedCommit
@@ -388,7 +442,11 @@ func (e *Engine) PruneWithMetrics(nodeID, digest string, score *float64, metrics
 	if cleanTarget != nil {
 		e.state.ActiveNodeID = cleanTarget.ID
 	}
-	e.recomputeParetoLocked()
+	if len(e.state.Objectives) >= 2 {
+		e.recomputeParetoLocked()
+	} else {
+		e.recomputeBestLocked()
+	}
 	return copyNode(n), copyNode(cleanTarget), e.saveLocked()
 }
 
@@ -886,6 +944,39 @@ func (e *Engine) isBetterThanBestLocked(score float64) bool {
 		return score > *best.PrimaryScore
 	}
 	return score < *best.PrimaryScore
+}
+
+func (e *Engine) recomputeBestLocked() {
+	var bestID string
+	var bestScore float64
+	hasBest := false
+
+	ids := make([]string, 0, len(e.state.Nodes))
+	for id := range e.state.Nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	sort.SliceStable(ids, func(i, j int) bool {
+		return e.state.Nodes[ids[i]].CreatedAt.Before(e.state.Nodes[ids[j]].CreatedAt)
+	})
+
+	for _, id := range ids {
+		n := e.state.Nodes[id]
+		if n == nil || !n.Status.IsSuccess() || n.PrimaryScore == nil {
+			continue
+		}
+		sc := *n.PrimaryScore
+		if !hasBest || (e.state.HigherIsBetter && sc > bestScore) || (!e.state.HigherIsBetter && sc < bestScore) {
+			bestID = id
+			bestScore = sc
+			hasBest = true
+		}
+	}
+	if hasBest {
+		e.state.BestNodeID = bestID
+	} else if e.state.RootID != "" {
+		e.state.BestNodeID = e.state.RootID
+	}
 }
 
 func (e *Engine) acquireFileLockReload() func() {

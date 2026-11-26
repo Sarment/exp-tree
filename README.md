@@ -115,7 +115,7 @@ You can also bind any remote server directly inside the Antigravity ExpTree side
 # 1. Optional immediate placeholder (marks node-0 EXPLORING before slow baseline prep)
 exptree init -repo <DIR> -goal "<topic>" -has-baseline=false
 
-# 2. Initialize / finalize baseline with multi-objective specs & hard constraints
+# 2. Initialize / finalize baseline with multi-objective specs & hard constraints (supports -timeout 0 & -detach)
 exptree up -repo <DIR> -goal "<goal>" \
   -objectives "pos_err:min,orbits_per_sec:max" \
   -constraints "energy_drift<=0.001,ang_mom_drift<=1e-6" \
@@ -124,10 +124,15 @@ exptree up -repo <DIR> -goal "<goal>" \
 # 3. Fork an isolated worktree branch (also works from PRUNED nodes for bug-fix retries)
 exptree branch -repo <DIR> -parent node-0 -agent codex -hypothesis "<mechanism>" -worktree
 
-# 4. Evaluate objectively (commits promoted changes, or saves failed snapshot & resets clean parent)
+# 4. Evaluate objectively (default -timeout 0 unlimited; add -detach for multi-hour background jobs)
 exptree eval -repo <DIR> -node <node-id> -cmd "python3 bench.py" -rollback=true
+exptree eval -repo <DIR> -node <node-id> -cmd "<long-running-cmd>" -detach
 
-# 5. Converge 2+ Pareto / validated branches semantically
+# 5. Stream live progress or record results from external cluster / Slurm jobs
+exptree step -repo <DIR> -node <node-id> -msg "120/1000 solved=96"
+exptree record -repo <DIR> -node <node-id> -from-file <log>   # or -metrics "solved=96,conflicts=0"
+
+# 6. Converge 2+ leading / validated branches semantically
 exptree converge -repo <DIR> -parents node-2,node-3 -supervisor codex
 
 # 6. Read structured tree brief, UCB1 expansion recommendation, or reconcile crashed orphans

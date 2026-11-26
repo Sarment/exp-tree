@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sarment/exptree/internal/gitops"
@@ -22,8 +23,18 @@ type RunInput struct {
 	Command      string        `json:"command"`                 // 第二阶段主基准压测命令
 	Grader       GraderKind    `json:"grader,omitempty"`        // auto | json | go_bench | regex
 	MetricRegex  string        `json:"metric_regex,omitempty"`
-	Timeout      time.Duration `json:"timeout,omitempty"`
+	Timeout      time.Duration `json:"timeout,omitempty"` // <= 0 means unlimited (no outer wall-clock timeout)
 	AutoRollback bool          `json:"auto_rollback"`
+}
+
+type RecordInput struct {
+	NodeID       string     `json:"node_id,omitempty"`
+	WorkDir      string     `json:"work_dir,omitempty"`
+	RawOutput    string     `json:"raw_output"`
+	Grader       GraderKind `json:"grader,omitempty"`
+	MetricRegex  string     `json:"metric_regex,omitempty"`
+	DurationMs   int64      `json:"duration_ms,omitempty"`
+	AutoRollback bool       `json:"auto_rollback"`
 }
 
 type RunResult struct {
@@ -36,6 +47,75 @@ type RunResult struct {
 	RawOutput    string        `json:"raw_output"`
 }
 
+type progressWriter struct {
+	mu         sync.Mutex
+	buf        *bytes.Buffer
+	lineBuf    string
+	pendingMsg string
+	lastSent   time.Time
+	onMsg      func(string)
+}
+
+func (pw *progressWriter) Write(p []byte) (int, error) {
+	pw.mu.Lock()
+	defer pw.mu.Unlock()
+	if _, err := pw.buf.Write(p); err != nil {
+		return 0, err
+	}
+	if pw.onMsg == nil {
+		return len(p), nil
+	}
+	pw.lineBuf += string(p)
+	for {
+		idx := strings.IndexByte(pw.lineBuf, '\n')
+		if idx < 0 {
+			break
+		}
+		line := strings.TrimSpace(strings.TrimSuffix(pw.lineBuf[:idx], "\r"))
+		pw.lineBuf = pw.lineBuf[idx+1:]
+		if msg, ok := parseProgressLine(line); ok {
+			if pw.lastSent.IsZero() || time.Since(pw.lastSent) >= 1500*time.Millisecond {
+				pw.lastSent = time.Now()
+				pw.pendingMsg = ""
+				pw.onMsg(msg)
+			} else {
+				pw.pendingMsg = msg
+			}
+		}
+	}
+	return len(p), nil
+}
+
+func (pw *progressWriter) Flush() {
+	pw.mu.Lock()
+	defer pw.mu.Unlock()
+	if pw.onMsg == nil {
+		return
+	}
+	if rest := strings.TrimSpace(strings.TrimSuffix(pw.lineBuf, "\r")); rest != "" {
+		if msg, ok := parseProgressLine(rest); ok {
+			pw.pendingMsg = msg
+		}
+		pw.lineBuf = ""
+	}
+	if pw.pendingMsg != "" {
+		pw.onMsg(pw.pendingMsg)
+		pw.pendingMsg = ""
+	}
+}
+
+func parseProgressLine(line string) (string, bool) {
+	for _, prefix := range []string{"PROGRESS:", "PROGRESS ", "[PROGRESS]"} {
+		if strings.HasPrefix(line, prefix) {
+			msg := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			if msg != "" {
+				return msg, true
+			}
+		}
+	}
+	return "", false
+}
+
 // Runner 驱动「执行实验脚本 -> 正则提取客观指标 -> 对比父节点基准 -> 自动 Commit 保留或 Prune 回滚」闭环
 type Runner struct {
 	engine  *tree.Engine
@@ -46,23 +126,23 @@ func NewRunner(engine *tree.Engine, repoDir string) *Runner {
 	return &Runner{engine: engine, repoDir: repoDir}
 }
 
+func (r *Runner) resolveTargetDir(inWorkDir, nodeWorktree string) string {
+	if inWorkDir != "" {
+		return inWorkDir
+	}
+	if nodeWorktree != "" {
+		return nodeWorktree
+	}
+	return r.repoDir
+}
+
 func (r *Runner) Run(parentCtx context.Context, in RunInput) (*RunResult, error) {
 	active, err := r.engine.GetNode(in.NodeID)
 	if err != nil {
 		return nil, err
 	}
 
-	timeout := in.Timeout
-	if timeout <= 0 {
-		timeout = 60 * time.Second
-	}
-
-	targetDir := r.repoDir
-	if in.WorkDir != "" {
-		targetDir = in.WorkDir
-	} else if active.WorktreePath != "" {
-		targetDir = active.WorktreePath
-	}
+	targetDir := r.resolveTargetDir(in.WorkDir, active.WorktreePath)
 
 	// 第一阶段：可选快速冒烟门禁 (Smoke Gate) —— 2 秒跑不通过单测直接短路，不浪费重型算力预算
 	if strings.TrimSpace(in.SmokeCommand) != "" {
@@ -84,8 +164,12 @@ func (r *Runner) Run(parentCtx context.Context, in RunInput) (*RunResult, error)
 		_, _ = r.engine.RecordStep(active.ID, "Smoke sanity gate passed", true)
 	}
 
-	ctx, cancel := context.WithTimeout(parentCtx, timeout)
-	defer cancel()
+	ctx := parentCtx
+	var cancel context.CancelFunc
+	if in.Timeout > 0 {
+		ctx, cancel = context.WithTimeout(parentCtx, in.Timeout)
+		defer cancel()
+	}
 
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, "sh", "-c", in.Command)
@@ -93,27 +177,54 @@ func (r *Runner) Run(parentCtx context.Context, in RunInput) (*RunResult, error)
 		cmd.Dir = targetDir
 	}
 	var outBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &outBuf
+	pw := &progressWriter{
+		buf: &outBuf,
+		onMsg: func(msg string) {
+			_, _ = r.engine.RecordProgress(active.ID, msg)
+		},
+	}
+	cmd.Stdout = pw
+	cmd.Stderr = pw
 
 	runErr := cmd.Run()
+	pw.Flush()
 	durationMs := time.Since(start).Milliseconds()
 	combinedOut := outBuf.String()
 
 	// 情况 1：命令超时或非零退出码崩溃 -> 自动剪枝并回滚工作区
 	if runErr != nil {
-		digest := summarizeFailure(ctx.Err(), runErr, combinedOut, timeout)
+		digest := summarizeFailure(ctx.Err(), runErr, combinedOut, in.Timeout)
 		_, _ = r.engine.RecordStep(active.ID, "Eval failed: "+digest, false)
 		return r.pruneAndRollback(targetDir, active.ID, digest, nil, nil, durationMs, combinedOut, in.AutoRollback)
 	}
 
-	// 情况 2：使用可插拔 Grader 解析输出指标与硬性约束门禁
+	// 情况 2：统一解析指标、判定晋升/收敛或剪枝回滚
+	return r.GradeAndApply(ctx, RecordInput{
+		NodeID:       active.ID,
+		WorkDir:      in.WorkDir,
+		RawOutput:    combinedOut,
+		Grader:       in.Grader,
+		MetricRegex:  in.MetricRegex,
+		DurationMs:   durationMs,
+		AutoRollback: in.AutoRollback,
+	})
+}
+
+// GradeAndApply parses raw benchmark output and promotes/converges or prunes the target node.
+// Used directly by synchronous Run() and by external `exptree record`.
+func (r *Runner) GradeAndApply(ctx context.Context, in RecordInput) (*RunResult, error) {
+	active, err := r.engine.GetNode(in.NodeID)
+	if err != nil {
+		return nil, err
+	}
+	targetDir := r.resolveTargetDir(in.WorkDir, active.WorktreePath)
+
 	snap := r.engine.Snapshot()
-	grade, err := ParseGradeOutput(in.Grader, snap.MetricName, in.MetricRegex, combinedOut)
+	grade, err := ParseGradeOutput(in.Grader, snap.MetricName, in.MetricRegex, in.RawOutput)
 	if err != nil {
 		digest := "Benchmark succeeded but grader failed: " + err.Error()
 		_, _ = r.engine.RecordStep(active.ID, digest, false)
-		return r.pruneAndRollback(targetDir, active.ID, digest, nil, nil, durationMs, combinedOut, in.AutoRollback)
+		return r.pruneAndRollback(targetDir, active.ID, digest, nil, nil, in.DurationMs, in.RawOutput, in.AutoRollback)
 	}
 
 	score := grade.Score
@@ -122,8 +233,10 @@ func (r *Runner) Run(parentCtx context.Context, in RunInput) (*RunResult, error)
 		metricName = "score"
 	}
 	metrics := map[string]float64{
-		metricName:    score,
-		"duration_ms": float64(durationMs),
+		metricName: score,
+	}
+	if in.DurationMs > 0 {
+		metrics["duration_ms"] = float64(in.DurationMs)
 	}
 	for k, v := range grade.Metrics {
 		metrics[k] = v
@@ -136,22 +249,20 @@ func (r *Runner) Run(parentCtx context.Context, in RunInput) (*RunResult, error)
 		digest := "[CONSTRAINT_GATE_FAILED] " + grade.GateReason
 		_, _ = r.engine.RecordStep(active.ID, digest, false)
 		sc := score
-		return r.pruneAndRollback(targetDir, active.ID, digest, &sc, metrics, durationMs, combinedOut, in.AutoRollback)
+		return r.pruneAndRollback(targetDir, active.ID, digest, &sc, metrics, in.DurationMs, in.RawOutput, in.AutoRollback)
 	}
 
-	// 统一调用引擎的「硬约束一票否决 + 多目标帕累托前沿 / 单标量对比」评估器
 	promoted, evalReason := r.engine.EvaluateCandidate(active.ID, score, metrics)
 	if !promoted {
 		_, _ = r.engine.RecordStep(active.ID, evalReason, true)
-		return r.pruneAndRollback(targetDir, active.ID, evalReason, &score, metrics, durationMs, combinedOut, in.AutoRollback)
+		return r.pruneAndRollback(targetDir, active.ID, evalReason, &score, metrics, in.DurationMs, in.RawOutput, in.AutoRollback)
 	}
 
-	// 情况 3：指标正向突破（或进入帕累托非支配前沿）！自动打 Git 快照 Commit 并晋升为 VALIDATED / CONVERGED
 	_, _ = r.engine.RecordStep(active.ID, evalReason, true)
 	var commitSHA string
-	if targetDir != "" && gitops.IsGitRepo(parentCtx, targetDir) {
+	if targetDir != "" && gitops.IsGitRepo(ctx, targetDir) {
 		commitSHA, _ = gitops.CommitSnapshot(
-			parentCtx,
+			ctx,
 			targetDir,
 			fmt.Sprintf("[exp-tree %s] %s (%s)", active.ID, active.Hypothesis, evalReason),
 		)
@@ -166,10 +277,10 @@ func (r *Runner) Run(parentCtx context.Context, in RunInput) (*RunResult, error)
 	return &RunResult{
 		Outcome:      string(validated.Status),
 		Score:        &sc,
-		DurationMs:   durationMs,
+		DurationMs:   in.DurationMs,
 		Node:         validated,
 		ContextBrief: r.engine.CompileContextBrief(""),
-		RawOutput:    combinedOut,
+		RawOutput:    in.RawOutput,
 	}, nil
 }
 

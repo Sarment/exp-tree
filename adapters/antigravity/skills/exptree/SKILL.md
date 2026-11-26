@@ -38,52 +38,64 @@ Follow these four strict formatting and clarity rules across every tree field an
    - ❌ **Bad**: `[NOVEL_CLEAR H2] Supermodular Bridge-Bundle Set-Union Precedence Knapsack over Bipartite Rare-IDF Span Hypergraph` / “通过二部稀疏符号超图与集并先序背包实现超模桥接打包”
    - ✅ **Good**: `按稀有符号做 4 跳关联打包，避免丢失多跳因果线索` / “以当前问题里的稀有代码标识符（函数名/变量名/报错词）为起点，沿共享符号最多追溯 4 跳，把整条因果链打包一起保留，防止留头尾却丢中间推理。”
 
-## 3. End-to-End Scientific Exploration Lifecycle (with Mandatory Anti-Collision Novelty Gate)
-1. **Step 0 — Immediate Tree Creation & Binding (First Turn, <5s, BEFORE `exp-scout`)**:
-   - Do **NOT** wait until literature search finishes to create the tree — users watching the sidebar expect immediate feedback on Turn 1!
-   - Immediately create a clean Git repo under `${ANTIGRAVITY_APP_DATA_DIR:-$HOME/.gemini/antigravity}/scratch/<slug>` and initialize an `EXPLORING` `node-0` placeholder:
+## 3. End-to-End Scientific Exploration Lifecycle (Readiness-Gated + Novelty-Checked)
+Follow the real scientific cadence — enter at whichever stage matches what is already settled, never force code before direction and baseline are aligned:
+1. **Stage 0 — Scientific Readiness Gate (Enter Where You Are)**:
+   - Check 3 readiness preconditions (if all 3 are already specified by the user, move immediately to initialization & `node-0`; if any is open, resolve THAT piece with the user first instead of writing speculative code):
+     1. **Research Direction**: Is the scientific question or optimization goal settled? When the user asks to survey papers/solvers and find good topics (`exp-scout` Mode A), complete the survey, propose 2–3 concrete directions with clear gaps, and align with the user **before** scaffolding code or trees.
+     2. **Target Carrier & Genuine Baseline (`node-0`)**: Which existing codebase/solver/repo is `node-0` (or does the user actually want a new harness built from scratch)? Always anchor `node-0` on the real solver/code agreed with the user — **never** invent hundreds of lines of ad-hoc code just to populate an initial node.
+     3. **Evaluation & Runtime Scale**: Which instances, metrics, constraints, and runtime profile apply? Fast tasks run synchronously; multi-hour solver/GPU benchmarks run asynchronously with `-timeout 0` / `-detach` (do NOT shrink a scientifically necessary full benchmark just to fit an artificial short timeout).
+   - Once ready to experiment, create or bind the Git repo and initialize `node-0` right away so `[ExpTree](sidecar://exptree/exp_board/)` stays synchronized:
      ```bash
+     # Local new repo example (or bind an existing local / remote repo directly):
      REPO="${ANTIGRAVITY_APP_DATA_DIR:-$HOME/.gemini/antigravity}/scratch/<slug>"
      mkdir -p "$REPO" && cd "$REPO" && git init && printf "# <topic>\n" > README.md && git add README.md && git commit -m "init: scaffold research repo"
      exptree init -repo "$REPO" -goal "<与用户语言一致的简洁目标描述>" -has-baseline=false
      ```
-   - `exptree init` automatically picks up `ANTIGRAVITY_CONVERSATION_ID` (or pass `-conv <convId>`), binds `.exptree_bindings/<convId>.json`, and switches the `[ExpTree](sidecar://exptree/exp_board/)` panel live to `node-0` (`运行中`) while Phase 1 scouting runs.
 2. **Phase 1 — Known SOTA Baseline vs. Open Frontier (`exp-scout` Mode A)**:
    - Invoke `exp-scout` to survey published literature and open-source implementations.
    - **Strict Baseline Boundary**: Published papers or standard textbook/open-source algorithms may **ONLY** be used to construct `node-0` (or an explicit `[BASELINE]` reproduction node) as the starting floor to beat — **NEVER** pass off a known published method as an exploratory hypothesis branch!
-   - Once baseline code and benchmark harness are committed to `main`, finalize `node-0` with:
+   - Once baseline code/solver configuration is ready, measure and finalize `node-0`:
      ```bash
-     exptree up -repo "$REPO" -goal "<与用户语言一致的简洁目标描述>" -objectives "m1:max,m2:min" -constraints "c1<=0.01" -eval-cmd "python3 bench.py" -serve=false
+     exptree up -repo "$REPO" -goal "<与用户语言一致的简洁目标描述>" -objectives "m1:max,m2:min" -constraints "c1<=0.01" -eval-cmd "<cmd>" -serve=false
      ```
-     (`exptree up` seamlessly replaces the `-has-baseline=false` placeholder, sets multi-objective / constraint specs, and auto-measures `node-0` into `VALIDATED`!)
+     (`exptree up` upgrades any `-has-baseline=false` placeholder, sets multi-objective / constraint specs, supports `-timeout 0` unlimited duration & `-detach` for multi-hour baselines, and measures `node-0` cleanly.)
 3. **Phase 2 — Mandatory Pre-Flight Novelty Gate (`exp-scout` Mode B — Anti-Collision)**:
    - Before dispatching ANY `exp-worker` on a new exploratory idea (and before `exp-synthesizer` proposes a non-obvious hybrid), send the candidate mechanism(s) to `exp-scout` (Mode B) to run targeted arXiv / scholar / GitHub prior-art searches:
      - If `exp-scout` returns `COLLISION_PUBLISHED` ❌: **DROP IT IMMEDIATELY** (do NOT spawn `exp-worker` on it unless the user explicitly asked to reproduce that baseline).
      - Only hypotheses cleared as `NOVEL_CLEAR` ✅ (with documented *Nearest Prior Art* + *Structural Delta*) AND non-overlapping with existing `ExpTree` nodes may be dispatched to `exp-worker`!
-4. **Phase 3 — Parallel Orthogonal Exploration (`exp-worker` × K)**:
+4. **Phase 3 — Parallel Orthogonal Exploration & Long-Running Evaluations (`exp-worker` × K)**:
    - Launch 2–3 `exp-worker` subagents **in parallel** via `invoke_subagent` ONLY on novelty-cleared hypotheses, each in an isolated `-worktree`. Give each worker a concise user-language `-hypothesis` (12–28 Chinese chars or <=12 English words, no `H1/H2` or `[NOVEL_CLEAR]` prefixes).
+   - **Long-Running / Multi-Hour Benchmarks** (e.g. SMT/OMT suites, multi-hour GPU training):
+     - Outer `exptree eval` does **not** impose a timeout (`-timeout 0` by default), leaving per-instance timeouts to the solver itself.
+     - Pass `-detach` on `exptree eval` / `exptree up` to run in a detached background session (`setsid`) that survives SSH/terminal disconnect while writing logs under `.git/exp-tree/logs/<node-id>.log`.
+     - Benchmark scripts can emit `PROGRESS: <status>` lines (streamed automatically into the node's live step in the sidebar), or external schedulers (Slurm/SSH workers) can push live updates via `exptree step -node <id> -msg "..."` and finalize via `exptree record -node <id> -from-file <log>` or `-metrics "k1=v1,k2=v2"`.
+     - Staged evaluation is supported on the same node (e.g. smoke sanity run first, then update final metrics with a full-suite `exptree eval` or `exptree record`).
 5. **Phase 4 — Triage, Retry, or Converge (`exp-synthesizer`)**:
-   - Inspect `exptree brief -repo "$REPO"`: rescue bug-pruned novel branches via `-parent <pruned-node-id>`, invoke `exp-synthesizer` when $\ge 2$ complementary Pareto-frontier (`★`) branches emerge, sync the winning commit to `main`, and report both **empirical gains** and **novelty delta vs. prior art** using Section 2's clear action-first prose and canonical `node-X` IDs.
+   - Inspect `exptree brief -repo "$REPO"`: rescue bug-pruned novel branches via `-parent <pruned-node-id>`, invoke `exp-synthesizer` when $\ge 2$ complementary leading (`★`) branches emerge, sync the winning commit to `main`, and report both **empirical gains** and **novelty delta vs. prior art** using Section 2's clear action-first prose and canonical `node-X` IDs.
 6. **Resuming an Interrupted Session (Automatic Orphan Reconciliation)**:
-   - Whenever resuming an existing bound tree in a restarted/re-opened conversation (or when `exptree view` / `exptree brief` shows stale non-root `EXPLORING` nodes from an interrupted session with no active subagents running), run `exptree resume -repo "$REPO"` **first** before branching new work. This evaluates any leftover worktrees or cleanly prunes dead interrupted branches (`PRUNED`), preventing zombie `运行中` nodes. *(Skip `exptree resume` if only `node-0` is an unmeasured Step 0 placeholder—finalize `node-0` with `exptree up` instead.)*
+   - Whenever resuming an existing bound tree in a restarted/re-opened conversation (or when `exptree view` / `exptree brief` shows stale non-root `EXPLORING` nodes from an interrupted session with no active subagents running), run `exptree resume -repo "$REPO"` **first** before branching new work. `exptree resume` checks PID liveness (`STILL_ALIVE` keeps active multi-hour jobs running untouched!), evaluates finished leftover worktrees, or cleanly prunes dead interrupted branches (`PRUNED`). *(Skip `exptree resume` if only `node-0` is an unmeasured placeholder—finalize `node-0` with `exptree up` instead.)*
 
 ## 4. Exact `exptree` CLI Reference
 *Never read `exptree`'s internal Go source files to check flags; use the exact commands below (`BIN=exptree`, or `~/.local/bin/exptree`; `etree` works as a symlink alias). Metric graders parse stdout lines formatted as `key=value` (or JSON output / Go benchmark ns/op).*
 
-- **Step 0 placeholder init & auto-bind**:
+- **Initialize tree & auto-bind**:
   `$BIN init -repo <REPO> -goal "<与用户语言一致的简洁目标描述>" -has-baseline=false` *(optional: `-conv <id> -metric <name> -minimize`)*
-- **Finalize baseline + multi-objective Pareto & hard constraints + auto-eval `node-0`**:
-  `$BIN up -repo <REPO> -goal "<与用户语言一致的简洁目标描述>" -objectives "err:min,throughput:max" -constraints "leak<=1e-6" -eval-cmd "<cmd>" -serve=false` *(single-metric fallback: `-metric <name> -minimize=true|false`)*
+- **Finalize baseline + multi-objective specs & hard constraints + auto-eval `node-0`**:
+  `$BIN up -repo <REPO> -goal "<与用户语言一致的简洁目标描述>" -objectives "err:min,throughput:max" -constraints "leak<=1e-6" -eval-cmd "<cmd>" -serve=false` *(supports `-timeout 0`, `-detach`, or single-metric `-metric <name> -minimize=true|false`)*
 - **Create hypothesis branch** (use `-worktree` for parallel workers):
   `$BIN branch -repo <REPO> -parent node-0 -agent exp-worker-1 -hypothesis "<与用户语言一致、12-28字具体机制>" -worktree` *(omitting `-parent` defaults to active node; branching from a `PRUNED` node is supported for retries)*
-- **Evaluate a branch**:
-  `$BIN eval -repo <REPO> -node <node-id> -cmd "<cmd>" -rollback=true` *(auto-commits on promotion, or commits failed snapshot onto `exp/<node-id>` and rolls back clean workspace on prune; optional `-regex`, `-timeout 60s`)*
+- **Evaluate a branch (sync or detached long-running job)**:
+  `$BIN eval -repo <REPO> -node <node-id> -cmd "<cmd>" -rollback=true` *(default `-timeout 0` unlimited; add `-detach` for multi-hour background jobs; optional `-regex`, `-timeout 3h`)*
+- **Stream live progress or record external benchmark results**:
+  `$BIN step -repo <REPO> -node <node-id> -msg "<120/1000 solved=96>"` *(updates live progress step in-place; add `-verified` for permanent milestone)*
+  `$BIN record -repo <REPO> -node <node-id> -from-file <log>` *(or `-metrics "m1=42,c1=0"` to promote/prune using external Slurm/SSH results)*
 - **Converge 2+ complementary branches**:
   `$BIN converge -repo <REPO> -parents node-2,node-3 -cmd "<cmd>"` *(or `-a node-2 -b node-3`; optional `-supervisor`, `-supervisor-cmd`, `-timeout 90s`)*
 - **Inspect tree, sidebar focus & compiled brief**:
   `$BIN view -repo <REPO>` | `$BIN focus` *(optional `-conv <id>`)*
   `$BIN brief -repo <REPO>` *(omitting `-repo` auto-resolves the bound repo via `ANTIGRAVITY_CONVERSATION_ID`)*
-- **Reconcile interrupted `EXPLORING` orphan branches**:
+- **Reconcile interrupted `EXPLORING` orphan branches (preserves live detached PIDs)**:
   `$BIN resume -repo <REPO>` *(optional `-cmd "<cmd>"`, `-conv <id>`)*
 - **Manage local or remote conversation binding manually**:
   `$BIN bind -repo <REPO>` | `$BIN bind -remote http://127.0.0.1:17421 -ssh <host> -repo <remote-repo>` | `$BIN bind -ssh <host> -repo <remote-repo>` | `$BIN bind -unbind` *(uses `ANTIGRAVITY_CONVERSATION_ID` or `-conv <id>`)*
