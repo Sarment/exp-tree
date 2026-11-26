@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -144,10 +145,13 @@ func (r *Runner) Run(parentCtx context.Context, in RunInput) (*RunResult, error)
 
 	targetDir := r.resolveTargetDir(in.WorkDir, active.WorktreePath)
 
+	evalEnv := evalCommandEnv()
+
 	// 第一阶段：可选快速冒烟门禁 (Smoke Gate) —— 2 秒跑不通过单测直接短路，不浪费重型算力预算
 	if strings.TrimSpace(in.SmokeCommand) != "" {
 		smokeCtx, smokeCancel := context.WithTimeout(parentCtx, 20*time.Second)
 		smokeCmd := exec.CommandContext(smokeCtx, "sh", "-c", in.SmokeCommand)
+		smokeCmd.Env = evalEnv
 		if targetDir != "" {
 			smokeCmd.Dir = targetDir
 		}
@@ -173,6 +177,7 @@ func (r *Runner) Run(parentCtx context.Context, in RunInput) (*RunResult, error)
 
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, "sh", "-c", in.Command)
+	cmd.Env = evalEnv
 	if targetDir != "" {
 		cmd.Dir = targetDir
 	}
@@ -334,4 +339,26 @@ func summarizeFailure(ctxErr, runErr error, output string, timeout time.Duration
 		}
 	}
 	return runErr.Error()
+}
+
+// evalCommandEnv prevents stale Python .pyc bytecode reuse when fast branch/eval cycles
+// overwrite a .py file within the same second using the exact same byte length.
+func evalCommandEnv() []string {
+	env := os.Environ()
+	out := make([]string, 0, len(env)+1)
+	hasNonEmpty := false
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PYTHONDONTWRITEBYTECODE=") {
+			if strings.TrimPrefix(kv, "PYTHONDONTWRITEBYTECODE=") != "" {
+				hasNonEmpty = true
+			} else {
+				continue
+			}
+		}
+		out = append(out, kv)
+	}
+	if !hasNonEmpty {
+		out = append(out, "PYTHONDONTWRITEBYTECODE=1")
+	}
+	return out
 }

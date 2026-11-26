@@ -129,15 +129,15 @@ Then load [`skills/exptree/SKILL.md`](skills/exptree/SKILL.md) (or invoke `/expt
 
 ## Multi-Backend Support Matrix
 
-ExpTree works bidirectionally: any MCP/CLI-capable agent can **drive** `exptree`, and `exptree`'s coordinator (`internal/orchestrator`) can also **spawn** worker backends in parallel worktrees.
+Host Coding Agents own multi-agent scheduling and drive `exptree` via CLI or MCP; `exptree` provides the shared state engine, `git worktree` isolation, objective evaluator, and optional `exptree converge -supervisor <backend>` conflict-resolution hook.
 
-| Agent Backend | Integration Surface | Worker / Supervisor Driver | Session Env Auto-Detect | Setup Guide |
+| Agent Backend | Integration Surface | Converge Supervisor Driver | Session Env Auto-Detect | Setup Guide |
 | --- | --- | --- | --- | --- |
 | **Codex** | MCP (`exptree mcp`) + CLI + `AGENTS.md` + `skills/` | `codex exec --full-auto` | `CODEX_THREAD_ID` | `exptree setup codex` |
 | **OpenCode** | MCP + Plugin Hook (`adapters/opencode`) + `skills/` | `opencode run` | `OPENCODE_SESSION_ID` | `exptree setup opencode` |
 | **Pi** | Native Extension (`adapters/pi`) + `/exptree` + `exptree serve` | `pi -p` | `PI_SESSION_ID` | `exptree setup pi` |
 | **DeepSeek Harness (`dsh`)** | YAML Overlay Patch (`adapters/dsh/exptree.yml`) + Hooks | `dsh headless` | `DSH_SESSION_ID` | `exptree setup dsh` |
-| **Antigravity IDE** | Native Sidecar Plugin + `/exptree` + `exp-scout` / `exp-worker` / `exp-synthesizer` | Hub-and-Spoke `invoke_subagent` | `ANTIGRAVITY_CONVERSATION_ID` | `exptree setup antigravity` |
+| **Antigravity IDE** | Native Sidecar Plugin + `/exptree` + `exp-scout` / `exp-worker` / `exp-synthesizer` | `exp-synthesizer` (host `invoke_subagent`) | `ANTIGRAVITY_CONVERSATION_ID` | `exptree setup antigravity` |
 
 ---
 
@@ -227,11 +227,11 @@ exptree/
 │   ├── tree/                   # Process-safe DAG engine, multi-objective selection, session focus
 │   ├── eval/                   # Auto/JSON/GoBench/Regex graders + commit-preserving rollback runner
 │   ├── crossover/              # 3-way merge conflict prober + N-to-1 synthesis brief generator
-│   ├── orchestrator/           # Bounded parallel worktree scheduler, backend drivers, PID orphan resume
+│   ├── orchestrator/           # PID orphan recovery (resume), converge supervisor drivers, and experimental Go dispatch library
 │   ├── gitops/                 # .git/exp-tree/ snapshot, diff, and worktree primitives
 │   ├── mcp/                    # Stdio MCP server
 │   ├── server/ & internal/webui/ # Embedded HTTP API & zero-dependency Web UI
-│   └── metabench/              # Deterministic A/B tree-search vs linear-search benchmark suite
+│   └── metabench/              # Synthetic deterministic simulation for unit-testing tree-search & dedup logic
 ├── skills/exptree/             # Backend-agnostic /exptree workflow skill
 ├── adapters/
 │   ├── codex/                  # Codex MCP config & AGENTS.md template

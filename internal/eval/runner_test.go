@@ -3,6 +3,7 @@ package eval
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -135,5 +136,83 @@ func TestUnlimitedTimeoutProgressStreamingAndRecord(t *testing.T) {
 	}
 	if reRec.Outcome != string(tree.NodeValidated) || eng.Snapshot().BestNodeID != b1.ID {
 		t.Fatalf("expected BestNodeID recomputed to %s (180.0) after b2 updated to 140.0, got %s", b1.ID, eng.Snapshot().BestNodeID)
+	}
+}
+
+func TestEvalNoStalePythonBytecodeCache(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+	prevVal, hadPrev := os.LookupEnv("PYTHONDONTWRITEBYTECODE")
+	_ = os.Unsetenv("PYTHONDONTWRITEBYTECODE")
+	t.Cleanup(func() {
+		if hadPrev {
+			_ = os.Setenv("PYTHONDONTWRITEBYTECODE", prevVal)
+		} else {
+			_ = os.Unsetenv("PYTHONDONTWRITEBYTECODE")
+		}
+	})
+
+	ctx := context.Background()
+	repo := t.TempDir()
+	eng, err := tree.OpenEngine(gitops.DefaultStatePath(repo))
+	if err != nil {
+		t.Fatalf("open engine: %v", err)
+	}
+	base := 100.0
+	if _, err := eng.InitRoot("Python bytecode cache isolation", "ops_per_sec", true, "", &base); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(eng, repo)
+
+	benchPy := filepath.Join(repo, "bench.py")
+	if err := os.WriteFile(benchPy, []byte("import mod\nprint(f'OPS_PER_SEC={mod.val()}')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	modPy := filepath.Join(repo, "mod.py")
+
+	// Branch 1: mod.val() == 111
+	b1, err := eng.Branch(tree.BranchInput{ParentID: "node-0", AgentID: "w1", Hypothesis: "Version 111"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(modPy, []byte("def val():\n    return 111\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res1, err := runner.Run(ctx, RunInput{
+		NodeID:       b1.ID,
+		Command:      "python3 bench.py",
+		Timeout:      10 * time.Second,
+		AutoRollback: false,
+	})
+	if err != nil {
+		t.Fatalf("run 1 failed: %v", err)
+	}
+	if res1.Score == nil || *res1.Score != 111 {
+		t.Fatalf("expected score 111, got %+v", res1)
+	}
+
+	// Branch 2: overwrite mod.py immediately with identical byte length -> must evaluate 222, not cached 111
+	b2, err := eng.Branch(tree.BranchInput{ParentID: "node-0", AgentID: "w2", Hypothesis: "Version 222"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(modPy, []byte("def val():\n    return 222\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res2, err := runner.Run(ctx, RunInput{
+		NodeID:       b2.ID,
+		Command:      "python3 bench.py",
+		Timeout:      10 * time.Second,
+		AutoRollback: false,
+	})
+	if err != nil {
+		t.Fatalf("run 2 failed: %v", err)
+	}
+	if res2.Score == nil || *res2.Score != 222 {
+		t.Fatalf("expected score 222 without stale pyc reuse, got %+v", res2)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "__pycache__")); !os.IsNotExist(err) {
+		t.Fatalf("expected no __pycache__ directory created during eval, got err=%v", err)
 	}
 }
