@@ -1,0 +1,22 @@
+# Binaries & build artifacts
+bin/
+etree
+*.exe
+*.out
+
+# OS & editor junk
+.DS_Store
+Thumbs.db
+*.tmp.*
+.vscode/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Generated demo workspaces & local state
+examples/demo_workspace/
+examples/synergy_workspace/
+examples/pareto_workspace/
+.exptree/

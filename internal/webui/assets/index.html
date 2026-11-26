@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ExpTree</title>
+  <script src="/preload.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:ROND,opsz,slnt,wdth,wght@0..100,6..144,-10..0,92..100,100..1000&family=Google+Sans+Code:ital,wght@0,300..800;1,300..800&display=swap">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <!-- Unbound Conversation Empty State (Swarm-style 1:1 isolation) -->
+  <section id="empty-view" class="empty-view hidden">
+    <div class="empty-inner">
+      <svg class="empty-dag-icon" viewBox="0 0 48 48" aria-hidden="true">
+        <g class="edge">
+          <path d="M11 24h7c3 0 4-9 8-9h3"/>
+          <path d="M11 24h7c3 0 4 9 8 9h3"/>
+          <path d="M29 15c3 0 3 9 6 9"/>
+          <path d="M29 33c3 0 3-9 6-9"/>
+        </g>
+        <circle class="node" cx="10" cy="24" r="3"/>
+        <circle class="node" cx="28" cy="15" r="3"/>
+        <circle class="node" cx="28" cy="33" r="3"/>
+        <circle class="node conv" cx="38" cy="24" r="3.4"/>
+      </svg>
+      <h2 class="empty-hero-title">当前对话尚未绑定探索树</h2>
+      <p class="empty-hero-sub">直接在左侧对话框描述科研或优化主题，主 Agent 会立即建树并自动接入此面板。</p>
+
+      <p id="empty-draft-note" class="empty-draft-note hidden">在左侧发送首条消息后，可自动建树或关联已有实验树</p>
+
+      <div id="existing-bind-block" class="bind-existing">
+        <div class="bind-divider"><span>或关联已有实验树</span></div>
+        <div class="bind-row">
+          <div class="select-existing">
+            <select id="existing-repo-select" aria-label="选择已有实验仓库"></select>
+          </div>
+          <button id="btn-bind-existing" type="button" class="ghost-btn">绑定</button>
+        </div>
+      </div>
+
+      <p class="empty-watch">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span id="empty-watch-text">监听当前对话中</span>
+      </p>
+    </div>
+  </section>
+
+  <!-- Bound Conversation / Standalone Board Shell -->
+  <div id="board-shell" class="hidden">
+    <header class="header">
+      <div class="header-row">
+        <div class="tree-ident">
+          <svg class="icon tree-ico" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3 8h3c1.5 0 2-3.5 3.5-3.5H13M6 8c1.5 0 2 3.5 3.5 3.5H13"/>
+            <circle cx="2.5" cy="8" r="1.2" fill="currentColor" stroke="none"/>
+            <circle cx="13.5" cy="4.5" r="1.2" fill="currentColor" stroke="none"/>
+            <circle cx="13.5" cy="11.5" r="1.2" fill="currentColor" stroke="none"/>
+          </svg>
+          <h1 id="tree-title" class="tree-title">ExpTree</h1>
+        </div>
+        <button id="btn-follow" type="button" class="follow-pill on" aria-pressed="true" title="自动跟随本树最新运行或新增的节点">
+          <span class="live-dot" aria-hidden="true"></span>
+          <span>跟随</span>
+        </button>
+        <button id="btn-refresh" type="button" class="icon-btn" title="立即刷新" aria-label="刷新">
+          <svg class="icon" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.35-3.6"/><path d="M13.5 2.5v2.3h-2.3"/></svg>
+        </button>
+        <button id="btn-tree-menu" type="button" class="icon-btn" title="切换或新建探索树" aria-label="探索树管理" aria-expanded="false" aria-haspopup="menu">
+          <svg class="icon" viewBox="0 0 16 16">
+            <circle cx="3.5" cy="8" r="1.15" fill="currentColor" stroke="none"/>
+            <circle cx="8" cy="8" r="1.15" fill="currentColor" stroke="none"/>
+            <circle cx="12.5" cy="8" r="1.15" fill="currentColor" stroke="none"/>
+          </svg>
+        </button>
+      </div>
+
+      <div id="tree-menu" class="tree-menu hidden" role="menu">
+        <div class="menu-meta">
+          <div id="menu-meta-path" class="menu-meta-path"></div>
+          <div id="menu-meta-conv" class="menu-meta-conv"></div>
+        </div>
+        <button id="menu-toggle-rebind" type="button" class="menu-item" role="menuitem" aria-expanded="false">
+          <svg class="icon" viewBox="0 0 16 16"><path d="M3.5 5.5h9M10 3l2.5 2.5L10 8M12.5 10.5h-9M6 8l-2.5 2.5L6 13"/></svg>
+          <span>关联其他已有实验树</span>
+          <span class="spacer"></span>
+          <span id="menu-rebind-chev" class="menu-chev">▾</span>
+        </button>
+        <div id="menu-repo-list" class="menu-repo-list hidden"></div>
+        <div class="menu-sep"></div>
+        <button id="menu-unbind" type="button" class="menu-item danger" role="menuitem">
+          <svg class="icon" viewBox="0 0 16 16"><path d="M6.5 9.5l3-3M5 7l-1.5 1.5a2.5 2.5 0 0 0 3.5 3.5L8.5 10.5M11 9l1.5-1.5a2.5 2.5 0 0 0-3.5-3.5L7.5 5.5"/></svg>
+          <span>解除当前对话绑定</span>
+        </button>
+        <div class="menu-hint">开启新课题请直接新建对话</div>
+      </div>
+
+      <div id="preview-banner" class="preview-banner hidden">
+        <span id="preview-label" class="preview-label"></span>
+        <span class="spacer"></span>
+        <button id="btn-preview-bind" type="button" class="preview-btn primary">绑定到此对话</button>
+        <button id="btn-preview-back" type="button" class="preview-btn">返回</button>
+      </div>
+
+      <div id="goal-bar" class="goal-bar hidden">
+        <span id="goal-dir" class="goal-dir"></span>
+        <span id="goal-text" class="goal-text"></span>
+      </div>
+
+      <nav class="tabs" role="tablist" aria-label="ExpTree 视图">
+        <button type="button" role="tab" data-tab="tree" class="tab active" aria-selected="true">
+          探索树 <span id="cnt-tree" class="tab-count"></span>
+        </button>
+        <button type="button" role="tab" data-tab="changes" class="tab" aria-selected="false">
+          代码变更 <span id="cnt-changes" class="tab-count"></span>
+        </button>
+        <button type="button" role="tab" data-tab="overview" class="tab" aria-selected="false">
+          总览 <span id="cnt-overview" class="tab-count"></span>
+        </button>
+      </nav>
+    </header>
+
+    <main class="main">
+      <section id="uninit-view" class="empty-box hidden">
+        <div id="uninit-title" class="empty-title">当前绑定的仓库尚无探索树</div>
+        <p id="uninit-desc" style="margin:6px 0 0;line-height:1.55;">
+          直接在左侧对话框说明科研或优化目标，主 Agent 会自动初始化探索树并实时接入此面板；也可从右上角「···」解绑或更换仓库。
+        </p>
+      </section>
+
+      <!-- Tab 1: Tree (Metro-Rail List + Top-Down Draggable Map) -->
+      <section id="tab-tree" class="tab-body active" role="tabpanel">
+        <div class="sub-toolbar">
+          <div class="segmented" role="group" aria-label="拓扑视图">
+            <button type="button" id="mode-rail" class="on">列表轨道</button>
+            <button type="button" id="mode-map">树形画布</button>
+          </div>
+          <span class="spacer"></span>
+          <span class="select-filter">
+            <select id="filter-select" aria-label="筛选节点状态">
+              <option value="all">全部节点</option>
+              <option value="win">仅看晋升 / 前沿</option>
+              <option value="pruned">仅看已剪枝</option>
+            </select>
+          </span>
+        </div>
+
+        <div id="tree-rail-container" class="rail-wrap"></div>
+
+        <div id="tree-map-wrap" class="hidden">
+          <div class="map-shell">
+            <div id="tree-map-container" class="map-pane">
+              <div id="map-zoom-layer" class="map-zoom-layer">
+                <div id="map-stage" class="map-stage">
+                  <svg id="map-svg" style="position:absolute;top:0;left:0;pointer-events:none;"></svg>
+                  <div id="map-nodes"></div>
+                </div>
+              </div>
+            </div>
+            <div class="map-zoom-bar">
+              <button type="button" id="zoom-out" class="icon-btn xs" title="缩小">−</button>
+              <button type="button" id="zoom-reset" class="zoom-lbl" title="重置缩放">100%</button>
+              <button type="button" id="zoom-in" class="icon-btn xs" title="放大">+</button>
+            </div>
+          </div>
+          <div id="map-inspector" style="margin-top:10px;"></div>
+        </div>
+      </section>
+
+      <!-- Tab 2: Changes (GitHub-Style Per-File Diff synced with selected node) -->
+      <section id="tab-changes" class="tab-body" role="tabpanel">
+        <div id="diff-header" class="diff-bar"></div>
+        <div id="diff-file-pills" class="file-pills"></div>
+        <div id="diff-files-container"></div>
+      </section>
+
+      <!-- Tab 3: Overview (Pareto Frontier / Trajectory & Step Feed) -->
+      <section id="tab-overview" class="tab-body" role="tabpanel"></section>
+    </main>
+
+    <!-- Quiet Bottom Focus Sync Bar -->
+    <footer id="focus-bar" class="focus-bar hidden" aria-live="polite">
+      <span class="focus-dot" aria-hidden="true"></span>
+      <span id="focus-text" class="focus-text"></span>
+      <button id="focus-clear" type="button" class="focus-clear hidden">清除多选</button>
+      <span id="focus-hint" class="focus-hint">左侧直接说“这个节点…”即可</span>
+    </footer>
+  </div>
+
+  <div id="chart-tip" class="chart-tip hidden" role="tooltip"></div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

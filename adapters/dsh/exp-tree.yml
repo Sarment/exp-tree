@@ -1,0 +1,26 @@
+# DeepSeek Harness (dsh) Overlay Patch
+# Usage (from the exp-tree repository root, after installing `etree` to PATH):
+#   dsh web --patch adapters/dsh/exp-tree.yml
+#   dsh headless --patch adapters/dsh/exp-tree.yml "Optimize benchmark throughput"
+
+- id: mcp-manager
+  name: '@deepseek-ai/dsh-mcp-manager'
+  config:
+    servers:
+      exp-tree:
+        transport: stdio
+        command: etree
+        args:
+          - mcp
+        enabled: true
+
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  disabled: false
+  config:
+    customSkillDirs:
+      - ./skills
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+  disabled: false
