@@ -44,8 +44,6 @@
     mapFitPending: true,
     menuOpen: false,
     rebindListOpen: false,
-    menuRemoteOpen: false,
-    emptyRemoteOpen: false,
     lastReposSig: '',
   };
 
@@ -388,17 +386,12 @@
 
   function setMenuOpen(open) {
     S.menuOpen = Boolean(open);
-    if (!S.menuOpen) {
-      S.rebindListOpen = false;
-      S.menuRemoteOpen = false;
-    }
+    if (!S.menuOpen) S.rebindListOpen = false;
     $('tree-menu')?.classList.toggle('hidden', !S.menuOpen);
     $('btn-tree-menu')?.setAttribute('aria-expanded', String(S.menuOpen));
     if (!S.menuOpen) {
       $('menu-repo-list')?.classList.add('hidden');
       $('menu-toggle-rebind')?.setAttribute('aria-expanded', 'false');
-      $('menu-remote-form')?.classList.add('hidden');
-      $('menu-toggle-remote')?.setAttribute('aria-expanded', 'false');
     }
   }
 
@@ -470,18 +463,15 @@
 
       const draftNote = $('empty-draft-note');
       const bindBlock = $('existing-bind-block');
-      const remoteBlock = $('remote-bind-block');
       const sel = $('existing-repo-select');
       const watchText = $('empty-watch-text');
 
       if (!S.conv) {
         draftNote?.classList.remove('hidden');
         bindBlock?.classList.add('hidden');
-        remoteBlock?.classList.add('hidden');
         if (watchText) watchText.textContent = '等待左侧发起对话…';
       } else {
         draftNote?.classList.add('hidden');
-        remoteBlock?.classList.remove('hidden');
         if (watchText) watchText.textContent = '监听当前对话中 · 左侧发起探索后将自动接入';
         if (!S.repos.length) {
           bindBlock?.classList.add('hidden');
@@ -602,45 +592,6 @@
       showToast(repoPath ? '已绑定到此对话' : '已解除当前对话绑定');
     } catch (err) {
       showToast(`操作失败：${err.message || err}`);
-    }
-  }
-
-  async function bindRemote({ sshHost, endpoint, repo }) {
-    if (!S.conv) {
-      showToast('未检测到当前对话 ID');
-      return;
-    }
-    const cleanRepo = String(repo || '').trim();
-    const cleanHost = String(sshHost || '').trim();
-    const cleanEp = String(endpoint || '').trim();
-    if (!cleanRepo) {
-      showToast('请填写远端仓库路径');
-      return;
-    }
-    if (!cleanHost && !cleanEp) {
-      showToast('请填写 SSH 主机或 HTTP 隧道地址');
-      return;
-    }
-    try {
-      const q = new URLSearchParams({
-        conversationId: S.conv,
-        mode: 'remote',
-        sshHost: cleanHost,
-        endpoint: cleanEp,
-        repo: cleanRepo,
-      });
-      await apiGet(`/api/bind?${q.toString()}`);
-      S.previewRepo = '';
-      S.emptyRemoteOpen = false;
-      $('empty-remote-form')?.classList.add('hidden');
-      $('btn-toggle-remote-empty')?.setAttribute('aria-expanded', 'false');
-      setMenuOpen(false);
-      await syncBinding(false);
-      await pollState(true);
-      syncFocusBackend();
-      showToast('已连接并绑定远端实验树');
-    } catch (err) {
-      showToast(`连接失败：${err.message || err}`);
     }
   }
 
@@ -1908,33 +1859,7 @@
 
   $('menu-toggle-rebind')?.addEventListener('click', () => {
     S.rebindListOpen = !S.rebindListOpen;
-    if (S.rebindListOpen) {
-      S.menuRemoteOpen = false;
-      $('menu-remote-form')?.classList.add('hidden');
-      $('menu-toggle-remote')?.setAttribute('aria-expanded', 'false');
-    }
     renderMenuRepoList();
-  });
-  $('menu-toggle-remote')?.addEventListener('click', () => {
-    S.menuRemoteOpen = !S.menuRemoteOpen;
-    if (S.menuRemoteOpen) {
-      S.rebindListOpen = false;
-      renderMenuRepoList();
-      if (S.mode === 'remote' && S.remote) {
-        if ($('menu-remote-ssh') && !$('menu-remote-ssh').value) $('menu-remote-ssh').value = S.remote.ssh_host || '';
-        if ($('menu-remote-endpoint') && !$('menu-remote-endpoint').value) $('menu-remote-endpoint').value = S.remote.endpoint || '';
-        if ($('menu-remote-repo') && !$('menu-remote-repo').value) $('menu-remote-repo').value = S.remote.repo || '';
-      }
-    }
-    $('menu-remote-form')?.classList.toggle('hidden', !S.menuRemoteOpen);
-    $('menu-toggle-remote')?.setAttribute('aria-expanded', String(S.menuRemoteOpen));
-  });
-  $('btn-menu-bind-remote')?.addEventListener('click', () => {
-    bindRemote({
-      sshHost: $('menu-remote-ssh')?.value || '',
-      endpoint: $('menu-remote-endpoint')?.value || '',
-      repo: $('menu-remote-repo')?.value || '',
-    });
   });
   $('menu-unbind')?.addEventListener('click', () => bindRepo(''));
 
@@ -1944,19 +1869,6 @@
     if (S.selectedId) await ensureNodeDiffCached(S.selectedId, S.diffFromId);
     renderAll();
     showToast(S.offline ? '远端仍未就绪' : '已恢复远端连接');
-  });
-
-  $('btn-toggle-remote-empty')?.addEventListener('click', () => {
-    S.emptyRemoteOpen = !S.emptyRemoteOpen;
-    $('empty-remote-form')?.classList.toggle('hidden', !S.emptyRemoteOpen);
-    $('btn-toggle-remote-empty')?.setAttribute('aria-expanded', String(S.emptyRemoteOpen));
-  });
-  $('btn-bind-remote-empty')?.addEventListener('click', () => {
-    bindRemote({
-      sshHost: $('empty-remote-ssh')?.value || '',
-      endpoint: $('empty-remote-endpoint')?.value || '',
-      repo: $('empty-remote-repo')?.value || '',
-    });
   });
 
   $('btn-preview-bind')?.addEventListener('click', () => bindRepo(S.previewRepo));

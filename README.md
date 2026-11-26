@@ -103,7 +103,6 @@ When your experiments and heavy compute live on a remote Linux/GPU box (`gpu-a10
    ssh -fNL 17421:127.0.0.1:7421 gpu-a100
    exptree bind -remote http://127.0.0.1:17421 -ssh gpu-a100 -repo /data/exp/proj
    ```
-You can also bind or switch remote trees anytime from the Antigravity ExpTree sidebar via **"连接远程服务器…"**.
 
 ---
 

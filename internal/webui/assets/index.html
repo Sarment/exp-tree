@@ -41,26 +41,6 @@
         </div>
       </div>
 
-      <div id="remote-bind-block" class="remote-bind-block hidden">
-        <button id="btn-toggle-remote-empty" type="button" class="remote-toggle-btn" aria-expanded="false">
-          <svg class="ico" viewBox="0 0 16 16" aria-hidden="true">
-            <rect x="2.2" y="2.8" width="11.6" height="4.2" rx="1"/>
-            <rect x="2.2" y="9" width="11.6" height="4.2" rx="1"/>
-            <circle cx="4.5" cy="4.9" r="0.6" fill="currentColor" stroke="none"/>
-            <circle cx="4.5" cy="11.1" r="0.6" fill="currentColor" stroke="none"/>
-          </svg>
-          <span>连接远程服务器…</span>
-        </button>
-        <div id="empty-remote-form" class="remote-form hidden">
-          <input id="empty-remote-ssh" class="remote-input" type="text" placeholder="SSH 主机别名（如 gpu-a100）" autocomplete="off" spellcheck="false">
-          <input id="empty-remote-endpoint" class="remote-input" type="text" placeholder="远端 HTTP 隧道（可选，留空走直连 SSH，如 http://127.0.0.1:17421）" autocomplete="off" spellcheck="false">
-          <input id="empty-remote-repo" class="remote-input" type="text" placeholder="远端仓库路径（如 /data/exp/proj）" autocomplete="off" spellcheck="false">
-          <div class="remote-actions">
-            <button id="btn-bind-remote-empty" type="button" class="ghost-btn primary">连接并绑定</button>
-          </div>
-        </div>
-      </div>
-
       <p class="empty-watch">
         <span class="live-dot" aria-hidden="true"></span>
         <span id="empty-watch-text">监听当前对话中</span>
@@ -110,25 +90,6 @@
           <span id="menu-rebind-chev" class="menu-chev">▾</span>
         </button>
         <div id="menu-repo-list" class="menu-repo-list hidden"></div>
-        <button id="menu-toggle-remote" type="button" class="menu-item" role="menuitem" aria-expanded="false">
-          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true">
-            <rect x="2.2" y="2.8" width="11.6" height="4.2" rx="1"/>
-            <rect x="2.2" y="9" width="11.6" height="4.2" rx="1"/>
-            <circle cx="4.5" cy="4.9" r="0.6" fill="currentColor" stroke="none"/>
-            <circle cx="4.5" cy="11.1" r="0.6" fill="currentColor" stroke="none"/>
-          </svg>
-          <span>连接远程服务器</span>
-          <span class="spacer"></span>
-          <span class="menu-chev">▾</span>
-        </button>
-        <div id="menu-remote-form" class="menu-remote-form hidden">
-          <input id="menu-remote-ssh" class="remote-input" type="text" placeholder="SSH 主机（如 gpu-a100）" autocomplete="off" spellcheck="false">
-          <input id="menu-remote-endpoint" class="remote-input" type="text" placeholder="HTTP 隧道（可选，如 http://127.0.0.1:17421）" autocomplete="off" spellcheck="false">
-          <input id="menu-remote-repo" class="remote-input" type="text" placeholder="远端仓库路径（如 /data/exp/proj）" autocomplete="off" spellcheck="false">
-          <div class="remote-actions">
-            <button id="btn-menu-bind-remote" type="button" class="ghost-btn primary">连接</button>
-          </div>
-        </div>
         <div class="menu-sep"></div>
         <button id="menu-unbind" type="button" class="menu-item danger" role="menuitem">
           <svg class="icon" viewBox="0 0 16 16"><path d="M6.5 9.5l3-3M5 7l-1.5 1.5a2.5 2.5 0 0 0 3.5 3.5L8.5 10.5M11 9l1.5-1.5a2.5 2.5 0 0 0-3.5-3.5L7.5 5.5"/></svg>
