@@ -94,11 +94,15 @@ exptree resume -repo .
 ```
 `exptree resume` checks worker PID liveness (`kill -0`, leaving still-running detached multi-hour jobs untouched as `STILL_ALIVE`), evaluates any leftover worktrees, and cleanly prunes dead interrupted branches (`Skip if only node-0 is the unmeasured placeholder — run exptree up instead`).
 
-### Phase 6 — Cloud / Remote GPU Server Workflow
-When running experiments on a remote Linux/GPU machine while viewing the DAG locally:
-1. Build and copy Linux `exptree` to the server (`make build-linux`).
-2. Run `exptree` on the remote host as source of truth (git commits + `.git/exp-tree/state.json`), and expose `exptree serve -repo /data/exp/proj -addr 127.0.0.1:7421` over SSH tunnel (`ssh -fNL 17421:127.0.0.1:7421 gpu-a100`), or use zero-daemon SSH.
-3. Locally bind a remote anchor (`exptree bind -remote http://127.0.0.1:17421 -ssh gpu-a100 -repo /data/exp/proj` or `exptree bind -ssh gpu-a100 -repo /data/exp/proj`).
+### Phase 6 — Cloud / Remote GPU & SSH Server Workflow
+When running experiments on a remote Linux/GPU machine (`ssh <host>:/path`) while viewing the DAG locally:
+1. Automatically install/sync the remote binary in one command: `exptree deploy -ssh <host>`.
+2. Initialize `exptree` directly inside the remote **solver source repo** (never `git add` multi-GB benchmark parent directories) and bind locally with zero tunnel setup:
+   ```bash
+   ssh <host> "cd <remote-solver-repo> && PATH=\"\$HOME/.local/bin:\$PATH\" exptree init -goal '<goal>' -has-baseline=false"
+   exptree bind -ssh <host> -repo <remote-solver-repo>
+   ```
+3. Once bound with `-ssh`, local `exptree brief`, `view`, `recommend`, `branch`, `eval`, `step`, `record`, `converge`, and `resume` transparently proxy to `<host>:<remote-solver-repo>` over SSH ControlMaster (add `-remote http://127.0.0.1:17421` if you also forward `exptree serve` over SSH tunnel).
 
 ---
 
@@ -115,4 +119,5 @@ When running experiments on a remote Linux/GPU machine while viewing the DAG loc
 - `exptree resume -repo <DIR>`
 - `exptree bind -repo <DIR>` | `exptree bind -remote http://127.0.0.1:17421 -ssh <host> -repo <remote-repo>` | `exptree bind -ssh <host> -repo <remote-repo>` | `exptree bind -unbind` | `exptree focus` *(uses `ETREE_SESSION_ID` / `ANTIGRAVITY_CONVERSATION_ID` / `CODEX_THREAD_ID`)*
 - `exptree serve -repo <DIR> -addr 127.0.0.1:7421` *(standalone live web UI)*
+- `exptree deploy -ssh <host>` | `exptree version` *(auto-deploy binary to remote SSH host)*
 - `exptree setup <codex|opencode|pi|dsh|antigravity|remote>` *(prints backend or remote server setup)*

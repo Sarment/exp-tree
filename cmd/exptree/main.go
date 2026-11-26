@@ -64,6 +64,10 @@ func main() {
 		runFocus(os.Args[2:])
 	case "setup":
 		runSetup(os.Args[2:])
+	case "deploy":
+		runDeploy(os.Args[2:])
+	case "version":
+		runVersion()
 	case "serve":
 		runServe(os.Args[2:])
 	default:
@@ -306,6 +310,9 @@ func runBranch(args []string) {
 	steps := fs.Int("steps", 2, "Expected verification steps")
 	_ = fs.Parse(args)
 
+	if maybeProxyRemote("branch", args, *conv, isFlagSet(fs, "repo")) {
+		return
+	}
 	targetRepo := resolveRepoForCLI(*repo, *conv, isFlagSet(fs, "repo"))
 	if *hypothesis == "" {
 		log.Fatal("-hypothesis is required")
@@ -357,6 +364,9 @@ func runEval(args []string) {
 	rollback := fs.Bool("rollback", true, "Auto git rollback to parent on failure/regression")
 	_ = fs.Parse(args)
 
+	if maybeProxyRemote("eval", args, *conv, isFlagSet(fs, "repo")) {
+		return
+	}
 	targetRepo := resolveRepoForCLI(*repo, *conv, isFlagSet(fs, "repo"))
 	eng, err := tree.OpenEngine(resolveStatePath(targetRepo, *statePath))
 	if err != nil {
@@ -467,6 +477,9 @@ func runStep(args []string) {
 	verified := fs.Bool("verified", false, "True to record a discrete verified step instead of updating live progress")
 	_ = fs.Parse(args)
 
+	if maybeProxyRemote("step", args, *conv, isFlagSet(fs, "repo")) {
+		return
+	}
 	if strings.TrimSpace(*msg) == "" {
 		log.Fatal("-msg is required")
 	}
@@ -499,6 +512,9 @@ func runRecord(args []string) {
 	rollback := fs.Bool("rollback", false, "Auto git rollback to parent on failure/regression")
 	_ = fs.Parse(args)
 
+	if maybeProxyRemote("record", args, *conv, isFlagSet(fs, "repo")) {
+		return
+	}
 	var rawOut string
 	if strings.TrimSpace(*fromFile) != "" {
 		b, err := os.ReadFile(*fromFile)
@@ -544,6 +560,9 @@ func runCrossover(args []string) {
 	timeout := fs.Duration("timeout", 90*time.Second, "Synthesis + evaluation timeout")
 	_ = fs.Parse(args)
 
+	if maybeProxyRemote("converge", args, *conv, isFlagSet(fs, "repo")) {
+		return
+	}
 	targetRepo := resolveRepoForCLI(*repo, *conv, isFlagSet(fs, "repo"))
 	var pids []string
 	if *parents != "" {
@@ -607,6 +626,9 @@ func runResume(args []string) {
 	cmdStr := fs.String("cmd", "", "Optional benchmark command override")
 	_ = fs.Parse(args)
 
+	if maybeProxyRemote("resume", args, *conv, isFlagSet(fs, "repo")) {
+		return
+	}
 	targetRepo := resolveRepoForCLI(*repo, *conv, isFlagSet(fs, "repo"))
 	eng, err := tree.OpenEngine(resolveStatePath(targetRepo, *statePath))
 	if err != nil {
@@ -633,6 +655,9 @@ func runRecommend(args []string) {
 	statePath := fs.String("state", "", "Optional custom state file path")
 	_ = fs.Parse(args)
 
+	if maybeProxyRemote("recommend", args, *conv, isFlagSet(fs, "repo")) {
+		return
+	}
 	targetRepo := resolveRepoForCLI(*repo, *conv, isFlagSet(fs, "repo"))
 	eng, err := tree.OpenEngine(resolveStatePath(targetRepo, *statePath))
 	if err != nil {
@@ -651,6 +676,9 @@ func runView(args []string) {
 	jsonOut := fs.Bool("json", false, "Output raw JSON state")
 	_ = fs.Parse(args)
 
+	if maybeProxyRemote("view", args, *conv, isFlagSet(fs, "repo")) {
+		return
+	}
 	targetRepo := resolveRepoForCLI(*repo, *conv, isFlagSet(fs, "repo"))
 	eng, err := tree.OpenEngine(resolveStatePath(targetRepo, *statePath))
 	if err != nil {
@@ -671,6 +699,9 @@ func runBrief(args []string) {
 	statePath := fs.String("state", "", "Optional custom state file path")
 	_ = fs.Parse(args)
 
+	if maybeProxyRemote("brief", args, *conv, isFlagSet(fs, "repo")) {
+		return
+	}
 	if cid := tree.ResolveConversationID(*conv); cid != "" {
 		_ = os.Setenv("ANTIGRAVITY_CONVERSATION_ID", cid)
 	}
@@ -768,5 +799,5 @@ func shortSHA(sha string) string {
 }
 
 func printUsage() {
-	fmt.Println("Usage: exptree <up|init|branch|eval|record|step|crossover|resume|recommend|view|brief|bind|focus|setup|mcp|serve> [flags]")
+	fmt.Println("Usage: exptree <up|init|branch|eval|record|step|crossover|resume|recommend|view|brief|bind|focus|deploy|setup|version|mcp|serve> [flags]")
 }

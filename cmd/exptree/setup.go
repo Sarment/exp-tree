@@ -119,18 +119,18 @@ args = ["mcp"]
 
 	case "remote":
 		fmt.Printf(`# Cloud / Remote Linux & GPU Server Setup for ExpTree
-# 1) Cross-compile static Linux binary locally and deploy to server:
-#    make build-linux
-#    scp bin/exptree-linux-amd64 gpu-a100:~/.local/bin/exptree   # (or arm64)
+# 1) Zero-Manual Direct SSH Mode (Recommended — auto-installs remote binary & shares SSH ControlMaster):
+#    %s deploy -ssh gpu-a100
+#    ssh gpu-a100 "cd /data/exp/proj && ~/.local/bin/exptree init -goal ... -has-baseline=false"
+#    %s bind -ssh gpu-a100 -repo /data/exp/proj
 #
-# 2) Option A — Real-time HTTP Proxy over SSH Tunnel (Recommended):
-#    ssh gpu-a100 "exptree serve -repo /data/exp/proj -addr 127.0.0.1:7421"
+#    (Once bound locally, 'exptree brief/view/branch/eval/step/record/resume' proxy transparently!)
+#
+# 2) Optional Real-Time HTTP Proxy over SSH Tunnel (ultra-low latency polling):
+#    ssh gpu-a100 "~/.local/bin/exptree serve -repo /data/exp/proj -addr 127.0.0.1:7421"
 #    ssh -fNL 17421:127.0.0.1:7421 gpu-a100
 #    %s bind -remote http://127.0.0.1:17421 -ssh gpu-a100 -repo /data/exp/proj
-#
-# 3) Option B — Zero-Daemon Direct SSH ControlMaster:
-#    %s bind -ssh gpu-a100 -repo /data/exp/proj
-`, cmd, cmd)
+`, cmd, cmd, cmd)
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown backend %q\n", backend)

@@ -257,7 +257,8 @@ func BindConversation(convID, repoPath string) (*UIFocusState, error) {
 	return &st, nil
 }
 
-func validateSSHHost(host string) error {
+// ValidateSSHHost verifies an SSH host alias or user@host without leading options.
+func ValidateSSHHost(host string) error {
 	if host == "" {
 		return nil
 	}
@@ -291,7 +292,7 @@ func BindRemoteConversation(convID string, remote RemoteTarget) (*UIFocusState, 
 		return nil, err
 	}
 	remote.Endpoint = ep
-	if err := validateSSHHost(remote.SSHHost); err != nil {
+	if err := ValidateSSHHost(remote.SSHHost); err != nil {
 		return nil, err
 	}
 	if remote.Repo == "" {

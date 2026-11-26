@@ -90,21 +90,20 @@ When your experiments and heavy compute live on a remote Linux/GPU box (`gpu-a10
 | **Local Anchor** | `.exptree_bindings/<convId>.json` | Stores `mode: "remote"` with SSH host, optional HTTP tunnel URL, and UI focus |
 | **Offline Cache** | `.exptree_cache/<convId>.json` | Read-only local mirror updated on every successful poll; keeps DAG viewable offline |
 
-1. **Cross-compile static Linux binary on macOS** (`make build-linux`) and copy `bin/exptree-linux-amd64` (or `arm64`) to your server as `~/.local/bin/exptree`.
-2. **Option A — Real-Time HTTP over SSH Tunnel (Recommended)**:
+1. **Auto-deploy `exptree` to the remote server in one command**: `exptree deploy -ssh gpu-a100` (auto-detects Linux/macOS `amd64`/`arm64`, copies `~/.local/share/exptree/` binary over SSH ControlMaster, skips when version already matches).
+2. **Option A — Zero-Daemon Direct SSH (Recommended, zero manual tunnel needed)**:
    ```bash
-   # On remote GPU server:
-   exptree serve -repo /data/exp/proj -addr 127.0.0.1:7421
-
-   # Forward port to your local machine & bind current conversation:
+   ssh gpu-a100 "cd /data/exp/proj && ~/.local/bin/exptree init -goal '<goal>' -has-baseline=false"
+   exptree bind -ssh gpu-a100 -repo /data/exp/proj
+   ```
+   Once bound with `-ssh`, local `exptree brief`, `view`, `recommend`, `branch`, `eval`, `step`, `record`, `converge`, and `resume` transparently proxy to `gpu-a100:/data/exp/proj` over SSH ControlMaster while keeping local UI focus synced.
+3. **Option B — Real-Time HTTP Proxy over SSH Tunnel**:
+   ```bash
+   ssh gpu-a100 "~/.local/bin/exptree serve -repo /data/exp/proj -addr 127.0.0.1:7421"
    ssh -fNL 17421:127.0.0.1:7421 gpu-a100
    exptree bind -remote http://127.0.0.1:17421 -ssh gpu-a100 -repo /data/exp/proj
    ```
-3. **Option B — Zero-Daemon Direct SSH (SSH ControlMaster)**:
-   ```bash
-   exptree bind -ssh gpu-a100 -repo /data/exp/proj
-   ```
-You can also bind any remote server directly inside the Antigravity ExpTree sidebar via **"连接远程服务器…"**.
+You can also bind or switch remote trees anytime from the Antigravity ExpTree sidebar via **"连接远程服务器…"**.
 
 ---
 

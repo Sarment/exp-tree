@@ -14,9 +14,9 @@ In this workflow, **YOU (the main conversation agent) are the Principal Investig
 
 ## 1. 1-to-1 Conversation Binding & Zero-Friction Focus Sync
 Each Antigravity conversation binds 1-to-1 to its own experiment tree in `~/.gemini/antigravity/scratch/.exptree_bindings/<conversationId>.json`, preventing node focus or context from leaking across parallel conversations.
-- **Automatic Environment Scoping**: `exptree` (`up`, `init`, `bind`, `focus`, `brief`, `branch`, `eval`, `converge`, and symlink alias `etree`) automatically detects `ANTIGRAVITY_CONVERSATION_ID` from the shell environment (or accepts `-conv <conversationId>`, and MCP `etree_init` / `etree_brief` accept `conversation_id`).
+- **Automatic Environment Scoping**: `exptree` (`up`, `init`, `bind`, `focus`, `brief`, `branch`, `eval`, `step`, `record`, `converge`, and symlink alias `etree`) automatically detects `ANTIGRAVITY_CONVERSATION_ID` from the shell environment (or accepts `-conv <conversationId>`, and MCP `etree_init` / `etree_brief` accept `conversation_id`).
 - **Auto-Bind on Init**: Calling `exptree up -repo <REPO> -serve=false` (with `ANTIGRAVITY_CONVERSATION_ID` or `-conv <convId>`) initializes the tree AND automatically binds this conversation to `<REPO>`. You can also manage bindings manually via `exptree bind -repo <REPO>` or `exptree bind -unbind`.
-- **Cloud / Remote Server Binding**: When developing on a remote Linux/GPU host (with `exptree serve` over SSH tunnel or direct SSH), bind a lightweight remote anchor locally via `exptree bind -remote http://127.0.0.1:17421 -ssh <host> -repo <remote-repo>` (or direct SSH `exptree bind -ssh <host> -repo <remote-repo>`); the sidebar transparently proxies state/diffs and caches snapshots offline.
+- **Zero-Manual Remote Server Binding (`ssh <host>`)**: When the user asks to work on a remote SSH server (e.g. `ssh seed17:/path`), automatically run `exptree deploy -ssh <host>`, run `exptree init` in the **remote solver repo** (never `git add` large benchmark/data directories — anchor Git strictly inside the solver source repo!), and bind locally via `exptree bind -ssh <host> -repo <remote-repo>`. The sidebar automatically shows `<host>` and polls state/diffs over SSH ControlMaster; once bound, local `exptree brief/view/recommend/branch/eval/step/record/resume/converge` transparently proxy to `<host>:<remote-repo>`.
 - **Isolated Sidebar Focus**: When the user clicks a node (or `Cmd/Shift`-clicks multiple nodes) in the `[ExpTree](sidecar://exptree/exp_board/)` side panel, the panel writes strictly to `.exptree_bindings/<conversationId>.json` and injects `🎯 [UI 实时选中焦点]` into `exptree brief` for this conversation only.
 - Whenever the user asks *"这个节点做了什么？"*, *"为什么失败了？"*, *"从这继续往下试"*, or *"把选中的合起来"*, run `exptree focus` (and `exptree brief` / `git show` on that node's commit) and answer directly as the Super-Agent!
 - Always format node mentions as clickable pills:
@@ -45,12 +45,18 @@ Follow the real scientific cadence — enter at whichever stage matches what is 
      1. **Research Direction**: Is the scientific question or optimization goal settled? When the user asks to survey papers/solvers and find good topics (`exp-scout` Mode A), complete the survey, propose 2–3 concrete directions with clear gaps, and align with the user **before** scaffolding code or trees.
      2. **Target Carrier & Genuine Baseline (`node-0`)**: Which existing codebase/solver/repo is `node-0` (or does the user actually want a new harness built from scratch)? Always anchor `node-0` on the real solver/code agreed with the user — **never** invent hundreds of lines of ad-hoc code just to populate an initial node.
      3. **Evaluation & Runtime Scale**: Which instances, metrics, constraints, and runtime profile apply? Fast tasks run synchronously; multi-hour solver/GPU benchmarks run asynchronously with `-timeout 0` / `-detach` (do NOT shrink a scientifically necessary full benchmark just to fit an artificial short timeout).
-   - Once ready to experiment, create or bind the Git repo and initialize `node-0` right away so `[ExpTree](sidecar://exptree/exp_board/)` stays synchronized:
+   - Once ready to experiment, **never ask the user to manually set up remote connections**:
      ```bash
-     # Local new repo example (or bind an existing local / remote repo directly):
+     # Case A — Local workspace/repo:
      REPO="${ANTIGRAVITY_APP_DATA_DIR:-$HOME/.gemini/antigravity}/scratch/<slug>"
      mkdir -p "$REPO" && cd "$REPO" && git init && printf "# <topic>\n" > README.md && git add README.md && git commit -m "init: scaffold research repo"
      exptree init -repo "$REPO" -goal "<与用户语言一致的简洁目标描述>" -has-baseline=false
+
+     # Case B — Remote SSH host (e.g. user says "work in ssh seed17:/pub/..."):
+     # IMPORTANT: initialize git ONLY on the solver source code repo (never git add GBs of benchmarks/datasets).
+     exptree deploy -ssh <host>
+     ssh <host> "cd <remote-solver-repo> && PATH=\"\$HOME/.local/bin:\$PATH\" exptree init -goal '<目标>' -has-baseline=false"
+     exptree bind -ssh <host> -repo <remote-solver-repo>
      ```
 2. **Phase 1 — Known SOTA Baseline vs. Open Frontier (`exp-scout` Mode A)**:
    - Invoke `exp-scout` to survey published literature and open-source implementations.
@@ -79,6 +85,8 @@ Follow the real scientific cadence — enter at whichever stage matches what is 
 ## 4. Exact `exptree` CLI Reference
 *Never read `exptree`'s internal Go source files to check flags; use the exact commands below (`BIN=exptree`, or `~/.local/bin/exptree`; `etree` works as a symlink alias). Metric graders parse stdout lines formatted as `key=value` (or JSON output / Go benchmark ns/op).*
 
+- **Deploy `exptree` binary automatically to a remote SSH host**:
+  `$BIN deploy -ssh <host>` *(auto-detects Linux/macOS amd64/arm64, skips if version matches, installs `~/.local/bin/exptree` + `etree`)* | `$BIN version`
 - **Initialize tree & auto-bind**:
   `$BIN init -repo <REPO> -goal "<与用户语言一致的简洁目标描述>" -has-baseline=false` *(optional: `-conv <id> -metric <name> -minimize`)*
 - **Finalize baseline + multi-objective specs & hard constraints + auto-eval `node-0`**:
