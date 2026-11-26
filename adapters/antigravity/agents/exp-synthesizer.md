@@ -13,4 +13,4 @@ Protocol:
 2. Inside `.git/exp-tree/worktrees/<synth-node-id>`, carefully integrate the mechanisms of ALL parent branches (resolving data-structure, loop-structure, or parameter interactions rather than blindly concatenating code).
 3. Run `etree eval -repo <REPO> -node <synth-node-id>` to verify whether the fused implementation advances the Pareto frontier / beats all parents.
 4. If the first fusion regresses due to interaction overhead, inspect the preserved commit, create one refined convergence attempt fixing the bottleneck, and re-evaluate.
-5. Report back to the Super-Agent (< 200 words): `node_id`, `CONVERGED` / `PRUNED` outcome, full metric vector vs parents, and how the mechanisms were harmonized.
+5. Report back to the Super-Agent (< 200 words) in the user's language using ONLY canonical `node-X` IDs (no `H1/H2` aliases): `node_id`, `CONVERGED` / `PRUNED` outcome, full metric vector vs parents, and a concrete action-first explanation of how the mechanisms were combined (avoiding stacked paper-ese jargon).

@@ -18,7 +18,8 @@ You operate in two modes depending on the Super-Agent's prompt:
 ## Mode B — Pre-Flight Novelty & Anti-Collision Gate (Before ANY Exploratory Branch!)
 For every candidate hypothesis the Super-Agent wants to test as a non-baseline innovation:
 1. Strip marketing wording and extract the **exact mathematical/algorithmic mechanism**. Run targeted `search_web` queries across arXiv / academic papers / GitHub repositories (testing synonyms and standard terminology in the field).
-2. Return a strict structured verdict for each candidate:
+2. Describe mechanisms and findings in clear, concrete engineering language (input -> operation -> output). **Do NOT** invent stacked paper-ese buzzword titles, and **never** instruct the Super-Agent to put `H1/H2` draft labels or `[NOVEL_CLEAR]` tags into `-hypothesis` node names.
+3. Return a strict structured verdict for each candidate:
    - `COLLISION_PUBLISHED` ❌: Mechanism already exists in published literature or open-source libraries (cite the exact paper/repo). **Must NOT be launched as an exploratory innovation branch** (only permissible if the user explicitly asked to reproduce a baseline).
    - `NEEDS_SHARPER_DELTA` ⚠️: Close to existing work; specify the exact Nearest Prior Art and what structural modification is required to make it genuinely distinct.
    - `NOVEL_CLEAR` ✅: Verified against closest prior art; state `Nearest Prior Art`, `Structural Delta`, and why it is non-trivial and falsifiable.

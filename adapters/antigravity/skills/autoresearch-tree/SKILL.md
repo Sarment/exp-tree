@@ -20,14 +20,29 @@ Each Antigravity conversation binds 1-to-1 to its own experiment tree in `~/.gem
   - `[ExpTree · <node-id>](sidecar://exp-tree/exp_board/?repo=<URL-encoded-repo>&node=<node-id>)`
   - `[ExpTree · <node-id> Diff](sidecar://exp-tree/exp_board/?repo=<URL-encoded-repo>&node=<node-id>&tab=changes)`
 
-## 2. End-to-End Scientific Exploration Lifecycle (with Mandatory Anti-Collision Novelty Gate)
+## 2. Communication, Naming & Language Discipline
+Follow these four strict formatting and clarity rules across every tree field and user-facing explanation:
+1. **Language Mirroring**: Always write `-goal`, `-hypothesis`, step summaries, and all user-facing explanations in the **user's conversation language** (e.g., Chinese when the user speaks Chinese). Keep standard engineering terms like `KV-Cache`, `BFS`, `IDF`, `Git Worktree`, or file/symbol names in backticks naturally.
+2. **Single Canonical ID (`node-X`) & Crisp `-hypothesis`**:
+   - Refer to branches **ONLY** by their ExpTree node IDs (`node-0`, `node-1`, `node-4`).
+   - **NEVER** put internal draft tags (`[NOVEL_CLEAR]`, `H1`/`H2`/`H3'`, `Candidate A/B`) into `-hypothesis`, commit messages, or user-facing replies.
+   - Keep `-hypothesis` concise: **12–28 Chinese characters (or <= 12 English words)** using the `<mechanism> + <problem solved>` structure, with **no parenthetical walls of text**.
+3. **Action-First Engineering Prose (Zero Jargon Stacking)**:
+   - Never stack >2 obscure modifiers into invented paper-ese names.
+   - Explain any node's improvement in 3 clear parts: **(1) Baseline pain point -> (2) Concrete mechanism (input -> action -> output) -> (3) Measured metric change**.
+   - Standard technical terms (`BFS`, `IDF`, `Pareto frontier`, `KV-Cache`) are welcome, provided you immediately follow them with half a sentence explaining what they concretely do here.
+4. **Contrast Few-Shot (Follow Strictly)**:
+   - ❌ **Bad**: `[NOVEL_CLEAR H2] Supermodular Bridge-Bundle Set-Union Precedence Knapsack over Bipartite Rare-IDF Span Hypergraph` / “通过二部稀疏符号超图与集并先序背包实现超模桥接打包”
+   - ✅ **Good**: `按稀有符号做 4 跳关联打包，避免丢失多跳因果线索` / “以当前问题里的稀有代码标识符（函数名/变量名/报错词）为起点，沿共享符号最多追溯 4 跳，把整条因果链打包一起保留，防止留头尾却丢中间推理。”
+
+## 3. End-to-End Scientific Exploration Lifecycle (with Mandatory Anti-Collision Novelty Gate)
 1. **Step 0 — Immediate Tree Creation & Binding (First Turn, <5s, BEFORE `exp-scout`)**:
    - Do **NOT** wait until literature search finishes to create the tree — users watching the sidebar expect immediate feedback on Turn 1!
    - Immediately create a clean Git repo under `${ANTIGRAVITY_APP_DATA_DIR:-$HOME/.gemini/antigravity}/scratch/<slug>` and initialize an `EXPLORING` `node-0` placeholder:
      ```bash
      REPO="${ANTIGRAVITY_APP_DATA_DIR:-$HOME/.gemini/antigravity}/scratch/<slug>"
      mkdir -p "$REPO" && cd "$REPO" && git init && printf "# <topic>\n" > README.md && git add README.md && git commit -m "init: scaffold research repo"
-     etree init -repo "$REPO" -goal "<topic>" -has-baseline=false
+     etree init -repo "$REPO" -goal "<与用户语言一致的简洁目标描述>" -has-baseline=false
      ```
    - `etree init` automatically picks up `ANTIGRAVITY_CONVERSATION_ID` (or pass `-conv <convId>`), binds `.exptree_bindings/<convId>.json`, and switches the `[ExpTree](sidecar://exp-tree/exp_board/)` panel live to `node-0` (`运行中`) while Phase 1 scouting runs.
 2. **Phase 1 — Known SOTA Baseline vs. Open Frontier (`exp-scout` Mode A)**:
@@ -35,7 +50,7 @@ Each Antigravity conversation binds 1-to-1 to its own experiment tree in `~/.gem
    - **Strict Baseline Boundary**: Published papers or standard textbook/open-source algorithms may **ONLY** be used to construct `node-0` (or an explicit `[BASELINE]` reproduction node) as the starting floor to beat — **NEVER** pass off a known published method as an exploratory hypothesis branch!
    - Once baseline code and benchmark harness are committed to `main`, finalize `node-0` with:
      ```bash
-     etree up -repo "$REPO" -goal "<goal>" -objectives "m1:max,m2:min" -constraints "c1<=0.01" -eval-cmd "python3 bench.py" -serve=false
+     etree up -repo "$REPO" -goal "<与用户语言一致的简洁目标描述>" -objectives "m1:max,m2:min" -constraints "c1<=0.01" -eval-cmd "python3 bench.py" -serve=false
      ```
      (`etree up` seamlessly replaces the `-has-baseline=false` placeholder, sets multi-objective / constraint specs, and auto-measures `node-0` into `VALIDATED`!)
 3. **Phase 2 — Mandatory Pre-Flight Novelty Gate (`exp-scout` Mode B — Anti-Collision)**:
@@ -43,21 +58,21 @@ Each Antigravity conversation binds 1-to-1 to its own experiment tree in `~/.gem
      - If `exp-scout` returns `COLLISION_PUBLISHED` ❌: **DROP IT IMMEDIATELY** (do NOT spawn `exp-worker` on it unless the user explicitly asked to reproduce that baseline).
      - Only hypotheses cleared as `NOVEL_CLEAR` ✅ (with documented *Nearest Prior Art* + *Structural Delta*) AND non-overlapping with existing `ExpTree` nodes may be dispatched to `exp-worker`!
 4. **Phase 3 — Parallel Orthogonal Exploration (`exp-worker` × K)**:
-   - Launch 2–3 `exp-worker` subagents **in parallel** via `invoke_subagent` ONLY on novelty-cleared hypotheses, each in an isolated `-worktree`.
+   - Launch 2–3 `exp-worker` subagents **in parallel** via `invoke_subagent` ONLY on novelty-cleared hypotheses, each in an isolated `-worktree`. Give each worker a concise user-language `-hypothesis` (12–28 Chinese chars or <=12 English words, no `H1/H2` or `[NOVEL_CLEAR]` prefixes).
 5. **Phase 4 — Triage, Retry, or Converge (`exp-synthesizer`)**:
-   - Inspect `etree brief -repo "$REPO"`: rescue bug-pruned novel branches via `-parent <pruned-node-id>`, invoke `exp-synthesizer` when $\ge 2$ complementary Pareto-frontier (`★`) branches emerge, sync the winning commit to `main`, and report both **empirical gains** and **novelty delta vs. prior art** to the user.
+   - Inspect `etree brief -repo "$REPO"`: rescue bug-pruned novel branches via `-parent <pruned-node-id>`, invoke `exp-synthesizer` when $\ge 2$ complementary Pareto-frontier (`★`) branches emerge, sync the winning commit to `main`, and report both **empirical gains** and **novelty delta vs. prior art** using Section 2's clear action-first prose and canonical `node-X` IDs.
 6. **Resuming an Interrupted Session (Automatic Orphan Reconciliation)**:
    - Whenever resuming an existing bound tree in a restarted/re-opened conversation (or when `etree view` / `etree brief` shows stale non-root `EXPLORING` nodes from an interrupted session with no active subagents running), run `etree resume -repo "$REPO"` **first** before branching new work. This evaluates any leftover worktrees or cleanly prunes dead interrupted branches (`PRUNED`), preventing zombie `运行中` nodes. *(Skip `etree resume` if only `node-0` is an unmeasured Step 0 placeholder—finalize `node-0` with `etree up` instead.)*
 
-## 3. Exact `etree` CLI Reference
+## 4. Exact `etree` CLI Reference
 *Never read `exp-tree`'s internal Go source files to check flags; use the exact commands below (`BIN=etree`, or `~/.local/bin/etree` if `PATH` isn't refreshed). Metric graders parse stdout lines formatted as `key=value` (or JSON output / Go benchmark ns/op).*
 
 - **Step 0 placeholder init & auto-bind**:
-  `$BIN init -repo <REPO> -goal "<topic>" -has-baseline=false` *(optional: `-conv <id> -metric <name> -minimize`)*
+  `$BIN init -repo <REPO> -goal "<与用户语言一致的简洁目标描述>" -has-baseline=false` *(optional: `-conv <id> -metric <name> -minimize`)*
 - **Finalize baseline + multi-objective Pareto & hard constraints + auto-eval `node-0`**:
-  `$BIN up -repo <REPO> -goal "<goal>" -objectives "err:min,throughput:max" -constraints "leak<=1e-6" -eval-cmd "<cmd>" -serve=false` *(single-metric fallback: `-metric <name> -minimize=true|false`)*
+  `$BIN up -repo <REPO> -goal "<与用户语言一致的简洁目标描述>" -objectives "err:min,throughput:max" -constraints "leak<=1e-6" -eval-cmd "<cmd>" -serve=false` *(single-metric fallback: `-metric <name> -minimize=true|false`)*
 - **Create hypothesis branch** (use `-worktree` for parallel workers):
-  `$BIN branch -repo <REPO> -parent node-0 -agent exp-worker-1 -hypothesis "<short idea>" -worktree` *(omitting `-parent` defaults to active node; branching from a `PRUNED` node is supported for retries)*
+  `$BIN branch -repo <REPO> -parent node-0 -agent exp-worker-1 -hypothesis "<与用户语言一致、12-28字具体机制>" -worktree` *(omitting `-parent` defaults to active node; branching from a `PRUNED` node is supported for retries)*
 - **Evaluate a branch**:
   `$BIN eval -repo <REPO> -node <node-id> -cmd "<cmd>" -rollback=true` *(auto-commits on promotion, or commits failed snapshot onto `exp/<node-id>` and rolls back clean workspace on prune; optional `-regex`, `-timeout 60s`)*
 - **Converge 2+ complementary branches**:
