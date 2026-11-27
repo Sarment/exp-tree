@@ -313,7 +313,23 @@ func (s *Server) handleUIDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, _ := gitops.DiffCommits(r.Context(), s.repoDir, parentNode.GitCommit, toNode.GitCommit)
+	isActive := toNode.Status == tree.NodeExploring || toNode.Status == tree.NodeSynthesizing
+	var raw string
+	if isActive && toNode.WorktreePath != "" {
+		if info, statErr := os.Stat(toNode.WorktreePath); statErr == nil && info.IsDir() {
+			out, _ := exec.CommandContext(r.Context(), "git", "-C", toNode.WorktreePath, "diff", "--unified=3", parentNode.GitCommit).Output()
+			raw = string(out)
+		} else if toNode.GitCommit != "" && toNode.GitCommit != parentNode.GitCommit {
+			raw, _ = gitops.DiffCommits(r.Context(), s.repoDir, parentNode.GitCommit, toNode.GitCommit)
+		}
+	} else if !isActive && parentNode.GitCommit == toNode.GitCommit {
+		raw = ""
+	} else if isActive {
+		out, _ := exec.CommandContext(r.Context(), "git", "-C", s.repoDir, "diff", "--unified=3", parentNode.GitCommit).Output()
+		raw = string(out)
+	} else {
+		raw, _ = gitops.DiffCommits(r.Context(), s.repoDir, parentNode.GitCommit, toNode.GitCommit)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"files":          parseUnifiedDiffGo(raw),
 		"rawDiff":        raw,

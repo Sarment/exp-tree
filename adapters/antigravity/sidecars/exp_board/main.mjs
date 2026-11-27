@@ -810,10 +810,26 @@ app.api('/api/diff', async (data) => {
         return { files: [], rawDiff: '', isPruned, pruneDigest: toNode.prune_digest || '', error: 'Invalid git commit SHA', compareTargets };
       }
 
-      const gitCmd = toSHA && toSHA !== fromSHA
-        ? `git -C ${qRepo} diff --unified=3 ${fromSHA} ${toSHA}`
-        : `git -C ${qRepo} diff --unified=3 ${fromSHA}`;
-      const rawDiff = await sshExec(remote.ssh_host, gitCmd, 5000);
+      const isActive = toNode.status === 'EXPLORING' || toNode.status === 'SYNTHESIZING';
+      const wtPath = String(toNode.worktree_path || '').trim();
+      let rawDiff = '';
+      let toSuffix = (toSHA || 'working').slice(0, 7);
+
+      if (isActive && wtPath) {
+        const qWt = shellQuote(wtPath);
+        const fallbackCmd = (toSHA && toSHA !== fromSHA)
+          ? `git -C ${qRepo} diff --unified=3 ${fromSHA} ${toSHA}`
+          : 'true';
+        const gitCmd = `if [ -d ${qWt} ]; then git -C ${qWt} diff --unified=3 ${fromSHA}; else ${fallbackCmd}; fi`;
+        rawDiff = await sshExec(remote.ssh_host, gitCmd, 5000);
+        toSuffix = 'working';
+      } else if (isActive) {
+        rawDiff = await sshExec(remote.ssh_host, `git -C ${qRepo} diff --unified=3 ${fromSHA}`, 5000);
+        toSuffix = 'working';
+      } else if (toSHA && toSHA !== fromSHA) {
+        rawDiff = await sshExec(remote.ssh_host, `git -C ${qRepo} diff --unified=3 ${fromSHA} ${toSHA}`, 5000);
+      }
+
       return {
         files: parseUnifiedDiff(rawDiff),
         rawDiff,
@@ -821,7 +837,7 @@ app.api('/api/diff', async (data) => {
         pruneDigest: toNode.prune_digest || '',
         fromId: parentNode.id,
         fromLabel: `${parentNode.id} (${fromSHA.slice(0, 7)})`,
-        toLabel: `${toNode.id} (${(toSHA || 'working').slice(0, 7)})`,
+        toLabel: `${toNode.id} (${toSuffix})`,
         compareTargets,
       };
     } catch (err) {
@@ -880,12 +896,20 @@ app.api('/api/diff', async (data) => {
     };
   }
 
-  const targetDir = toNode.worktree_path && existsSync(toNode.worktree_path) ? toNode.worktree_path : repo;
+  const isActive = toNode.status === 'EXPLORING' || toNode.status === 'SYNTHESIZING';
+  const hasWorktree = Boolean(toNode.worktree_path && existsSync(toNode.worktree_path));
   try {
-    const baseArgs = toNode.git_commit && toNode.git_commit !== parentNode.git_commit
-      ? ['-C', repo, 'diff', '--unified=3', parentNode.git_commit, toNode.git_commit]
-      : ['-C', targetDir, 'diff', '--unified=3', parentNode.git_commit];
-    const rawDiff = execFileSync('git', baseArgs, { encoding: 'utf-8', maxBuffer: 4 * 1024 * 1024 });
+    let rawDiff = '';
+    let toSuffix = (toNode.git_commit || 'working').slice(0, 7);
+    if (isActive && hasWorktree) {
+      rawDiff = execFileSync('git', ['-C', toNode.worktree_path, 'diff', '--unified=3', parentNode.git_commit], { encoding: 'utf-8', maxBuffer: 4 * 1024 * 1024 });
+      toSuffix = 'working';
+    } else if (isActive) {
+      rawDiff = execFileSync('git', ['-C', repo, 'diff', '--unified=3', parentNode.git_commit], { encoding: 'utf-8', maxBuffer: 4 * 1024 * 1024 });
+      toSuffix = 'working';
+    } else if (toNode.git_commit && toNode.git_commit !== parentNode.git_commit) {
+      rawDiff = execFileSync('git', ['-C', repo, 'diff', '--unified=3', parentNode.git_commit, toNode.git_commit], { encoding: 'utf-8', maxBuffer: 4 * 1024 * 1024 });
+    }
     return {
       files: parseUnifiedDiff(rawDiff),
       rawDiff,
@@ -893,7 +917,7 @@ app.api('/api/diff', async (data) => {
       pruneDigest: toNode.prune_digest || '',
       fromId: parentNode.id,
       fromLabel: `${parentNode.id} (${(parentNode.git_commit || '').slice(0, 7)})`,
-      toLabel: `${toNode.id} (${(toNode.git_commit || 'working').slice(0, 7)})`,
+      toLabel: `${toNode.id} (${toSuffix})`,
       compareTargets,
     };
   } catch (err) {

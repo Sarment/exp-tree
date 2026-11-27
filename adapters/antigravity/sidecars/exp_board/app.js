@@ -644,10 +644,18 @@
   }
 
   // ---------- Diff Cache ----------
+  function diffCacheKey(nodeId, fromId = '') {
+    const n = S.tree?.nodes?.[nodeId];
+    const effectiveFrom = fromId || parentsOf(n)[0] || '';
+    const fromNode = effectiveFrom ? S.tree?.nodes?.[effectiveFrom] : null;
+    const isActive = n?.status === 'EXPLORING' || n?.status === 'SYNTHESIZING';
+    const activeVer = isActive ? (n?.updated_at || '') : '';
+    return `${S.targetKey || S.repo}|${nodeId}|${n?.git_commit || ''}|${activeVer}|${fromId}|${fromNode?.git_commit || ''}`;
+  }
+
   async function ensureNodeDiffCached(nodeId, fromId = '') {
     if (!S.repo || !nodeId) return null;
-    const n = S.tree?.nodes?.[nodeId];
-    const cacheKey = `${S.targetKey || S.repo}|${nodeId}|${n?.git_commit || ''}|${fromId}`;
+    const cacheKey = diffCacheKey(nodeId, fromId);
     if (S.diffCache.has(cacheKey)) return S.diffCache.get(cacheKey);
     try {
       const convParam = S.conv ? `&conversationId=${encodeURIComponent(S.conv)}` : '';
@@ -663,8 +671,7 @@
   }
 
   function getCachedDiff(nodeId, fromId = '') {
-    const n = S.tree?.nodes?.[nodeId];
-    return S.diffCache.get(`${S.targetKey || S.repo}|${nodeId}|${n?.git_commit || ''}|${fromId}`) || null;
+    return S.diffCache.get(diffCacheKey(nodeId, fromId)) || null;
   }
 
   // ---------- Tab Navigation ----------
