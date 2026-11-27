@@ -72,7 +72,7 @@ Before branching on any new exploratory mechanism (or non-obvious hybrid):
      exptree branch -repo . -parent node-0 -agent worker-1 -hypothesis "<spoken verb-first action>" -worktree
      ```
    - Implement inside `.git/exp-tree/worktrees/<node-id>`, then evaluate objectively (`-timeout 0` unlimited by default; `-detach` for multi-hour jobs).
-   - **Eval/Prep Pipeline Overlap & Sliding-Window Queue (`<= 4` In-Flight)**: On single-slot machines (100+ CPU cores or saturated GPU node), enable `-serial-eval` on `init`/`up` (which serializes evals on `.git/exp-tree/eval.lock` and defaults `-max-inflight` to **`4`**: `1 running + <= 3 queued`). While a long benchmark holds the eval slot, never sit idle on a bare timer: keep prepping, low-core compiling (`-j4`), smoke-testing, and enqueueing via `exptree eval -detach -serial` until `4/4` in-flight slots are filled, then STOP branching until an eval finishes and opens a replacement slot.
+   - **Eval/Prep Pipeline Overlap & Sliding-Window Queue (`<= 4` In-Flight) + Event-Driven Watch**: On single-slot machines (100+ CPU cores or saturated GPU node), enable `-serial-eval` on `init`/`up` (which serializes evals on `.git/exp-tree/eval.lock` and defaults `-max-inflight` to **`4`**: `1 running + <= 3 queued`). While a long benchmark holds the eval slot, never sit idle on a bare timer: keep prepping, low-core compiling (`-j4`), smoke-testing, and enqueueing via `exptree eval -detach -serial` until `4/4` in-flight slots are filled, then STOP branching and launch `exptree watch` in the background so it exits and wakes the coordinator the instant any eval finishes.
    - Live progress during long runs: emit `PROGRESS: <msg>` from scripts or push updates via `exptree step -node <id> -msg "..."`; external cluster jobs finalize via `exptree record -node <id> -from-file <log>` or `-metrics "k1=v1,k2=v2"`.
 3. **Transition automatically to Wave $k+1$** after each wave:
    - **Deepen the winner** (`-parent <best-id>`), **stack / converge complementary gains** (`exptree converge -repo . -parents node-X,node-Y -cmd "<cmd>"` + optional `-supervisor`), **rescue bug-pruned nodes** (`-parent <pruned-id>`), or **revisit earlier failures** (`-revisits <pruned-id>`) when new gains remove their blocker.
@@ -112,7 +112,7 @@ When running experiments on a remote Linux/GPU machine (`ssh <host>:/path`) whil
 - `exptree step -repo <DIR> -node <node-id> -msg "<progress>"` | `exptree record -repo <DIR> -node <node-id> -from-file <log>` *(or `-metrics "k=v"`)*
 - `exptree converge -repo <DIR> -parents node-2,node-3 -cmd "<cmd>"` *(or `-supervisor codex|opencode|pi|dsh`)*
 - `exptree finalize -repo <DIR> [-node <node-id>] [-branch exptree/winner]` *(creates reviewable branch + PR-ready diff summary)*
-- `exptree brief -repo <DIR>` | `exptree view -repo <DIR>` | `exptree recommend -repo <DIR>`
+- `exptree brief -repo <DIR>` | `exptree view -repo <DIR>` | `exptree recommend -repo <DIR>` | `exptree watch` *(exits upon first completed active eval for instant wakeup)*
 - `exptree resume -repo <DIR>`
 - `exptree bind -repo <DIR>` | `exptree bind -remote http://127.0.0.1:17421 -ssh <host> -repo <remote-repo>` | `exptree bind -ssh <host> -repo <remote-repo>` | `exptree bind -unbind` | `exptree focus` *(uses `ETREE_SESSION_ID` / `ANTIGRAVITY_CONVERSATION_ID` / `CODEX_THREAD_ID`)*
 - `exptree serve -repo <DIR> -addr 127.0.0.1:7421` *(standalone live web UI)*

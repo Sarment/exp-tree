@@ -37,13 +37,27 @@ type hookReinjectState struct {
 	LastCheckpointStep int `json:"last_checkpoint_step"`
 }
 
+type hookStopInput struct {
+	ConversationID     string `json:"conversationId"`
+	ExecutionNum       int    `json:"executionNum"`
+	TerminationReason  string `json:"terminationReason"`
+	Error              string `json:"error"`
+	FullyIdle          bool   `json:"fullyIdle"`
+	ContinuationActive bool   `json:"continuationActive"`
+}
+
+type hookStopOutput struct {
+	Decision string `json:"decision,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
 type transcriptCheckpointLine struct {
 	StepIndex int    `json:"step_index"`
 	Type      string `json:"type"`
 }
 
 func runHook(args []string) {
-	if len(args) == 0 || args[0] != "pre-invocation" {
+	if len(args) == 0 {
 		fmt.Println("{}")
 		return
 	}
@@ -52,8 +66,14 @@ func runHook(args []string) {
 		fmt.Println("{}")
 		return
 	}
-	out := handlePreInvocation(inBytes)
-	fmt.Println(string(out))
+	switch args[0] {
+	case "pre-invocation":
+		fmt.Println(string(handlePreInvocation(inBytes)))
+	case "stop":
+		fmt.Println(string(handleStopHook(inBytes)))
+	default:
+		fmt.Println("{}")
+	}
 }
 
 func handlePreInvocation(inBytes []byte) []byte {
@@ -219,4 +239,113 @@ func stripFrontmatter(s string) string {
 		return strings.TrimSpace(s)
 	}
 	return strings.TrimSpace(rest[idx+len("\n---\n"):])
+}
+
+func handleStopHook(inBytes []byte) []byte {
+	var in hookStopInput
+	if json.Unmarshal(bytes.TrimSpace(inBytes), &in) != nil {
+		return []byte("{}")
+	}
+	if in.ContinuationActive || in.TerminationReason != "NO_TOOL_CALL" || !in.FullyIdle {
+		return []byte("{}")
+	}
+	convID := strings.TrimSpace(in.ConversationID)
+	if !tree.IsValidConvID(convID) {
+		return []byte("{}")
+	}
+	focus := tree.ReadConversationFocus(convID)
+	if focus == nil {
+		return []byte("{}")
+	}
+
+	st := loadStateFastForStopHook(convID, focus)
+	if st == nil || len(st.Nodes) == 0 {
+		return []byte("{}")
+	}
+
+	var active []string
+	for id, n := range st.Nodes {
+		if n == nil || (n.Status != tree.NodeExploring && n.Status != tree.NodeSynthesizing) {
+			continue
+		}
+		if n.WorkerPID > 0 || n.Phase == tree.PhaseQueued || n.Phase == tree.PhaseEvaluating || hasEvalActivityStep(n) {
+			active = append(active, id)
+		}
+	}
+	if len(active) == 0 {
+		return []byte("{}")
+	}
+
+	reason := fmt.Sprintf(
+		"[ExpTree 防掉线守护] 检测到后台仍有 %d 个运行/排队中的评测节点 (%s)，而当前对话没有任何后台 `exptree watch` 监听任务。请立刻用 `run_command` 在后台启动 `exptree watch`（WaitMsBeforeAsync=500）后结束本轮等待结果唤醒，避免评测跑完后主对话无人响应。",
+		len(active), strings.Join(active, ", "),
+	)
+	raw, err := json.Marshal(hookStopOutput{
+		Decision: "continue",
+		Reason:   reason,
+	})
+	if err != nil {
+		return []byte("{}")
+	}
+	return raw
+}
+
+func hasEvalActivityStep(n *tree.ExpNode) bool {
+	for _, s := range n.Steps {
+		a := s.Action
+		if strings.Contains(a, "已提交后台评测作业") ||
+			strings.Contains(a, "排队") ||
+			strings.Contains(a, "queued") ||
+			strings.HasPrefix(a, "进度:") {
+			return true
+		}
+	}
+	return false
+}
+
+func remoteCacheFilePath(convID string) string {
+	if eh := strings.TrimSpace(os.Getenv("ETREE_HOME")); eh != "" {
+		return filepath.Join(eh, "cache", convID+".json")
+	}
+	if appData := tree.AppDataDir(); appData != "" {
+		return filepath.Join(appData, "scratch", ".exptree_cache", convID+".json")
+	}
+	return ""
+}
+
+func loadStateFastForStopHook(convID string, focus *tree.UIFocusState) *tree.ForestState {
+	if focus.Mode == "remote" {
+		cp := remoteCacheFilePath(convID)
+		if cp == "" {
+			return nil
+		}
+		raw, err := os.ReadFile(cp)
+		if err != nil || len(raw) == 0 {
+			return nil
+		}
+		var wrapper struct {
+			State *tree.ForestState `json:"state"`
+		}
+		if json.Unmarshal(raw, &wrapper) == nil && wrapper.State != nil && wrapper.State.Nodes != nil {
+			return wrapper.State
+		}
+		var direct tree.ForestState
+		if json.Unmarshal(raw, &direct) == nil && direct.Nodes != nil {
+			return &direct
+		}
+		return nil
+	}
+
+	if focus.Repo == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(filepath.Join(focus.Repo, ".git", "exp-tree", "state.json"))
+	if err != nil || len(raw) == 0 {
+		return nil
+	}
+	var st tree.ForestState
+	if json.Unmarshal(raw, &st) == nil && st.Nodes != nil {
+		return &st
+	}
+	return nil
 }

@@ -6,6 +6,13 @@
         "command": "PATH=\"$HOME/.local/bin:$PATH\" exptree hook pre-invocation",
         "timeout": 5
       }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "PATH=\"$HOME/.local/bin:$PATH\" exptree hook stop",
+        "timeout": 5
+      }
     ]
   }
 }

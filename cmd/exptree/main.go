@@ -68,6 +68,8 @@ func main() {
 		runSetup(os.Args[2:])
 	case "deploy":
 		runDeploy(os.Args[2:])
+	case "watch":
+		runWatch(os.Args[2:])
 	case "hook":
 		runHook(os.Args[2:])
 	case "version":
@@ -926,5 +928,5 @@ func runFinalize(args []string) {
 }
 
 func printUsage() {
-	fmt.Println("Usage: exptree <up|init|branch|eval|record|step|crossover|finalize|resume|recommend|view|brief|bind|focus|deploy|hook|setup|version|mcp|serve> [flags]")
+	fmt.Println("Usage: exptree <up|init|branch|eval|record|step|crossover|finalize|resume|recommend|view|brief|watch|bind|focus|deploy|hook|setup|version|mcp|serve> [flags]")
 }
