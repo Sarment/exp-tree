@@ -407,9 +407,10 @@
     if (v === 0) return '0';
     const abs = Math.abs(v);
     if (abs < 0.005 || abs >= 1e6) return v.toExponential(2);
+    if (Number.isInteger(v)) return String(v);
     if (abs >= 1000) return String(Math.round(v));
-    if (abs >= 100) return v.toFixed(1);
-    if (abs >= 1) return v.toFixed(2).replace(/\.00$/, '.0');
+    if (abs >= 100) return v.toFixed(1).replace(/\.0$/, '');
+    if (abs >= 1) return v.toFixed(2).replace(/\.?0+$/, '');
     return v.toPrecision(3);
   }
 
