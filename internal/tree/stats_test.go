@@ -102,6 +102,9 @@ func TestBriefIncludesConfidenceRevisitAndAntiThrash(t *testing.T) {
 	if !strings.Contains(briefWin, "已剪枝分支前提是否改变") {
 		t.Fatalf("expected revisit reflection prompt on validated node, got:\n%s", briefWin)
 	}
+	if !strings.Contains(briefWin, "[下一轮推进建议]") {
+		t.Fatalf("expected next-wave nudge when leading node has no children, got:\n%s", briefWin)
+	}
 
 	ascii := eng.RenderASCII()
 	if !strings.Contains(ascii, "[↻ node-1]") {

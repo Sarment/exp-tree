@@ -15,19 +15,21 @@ ExpTree replaces linear trial-and-error with a **Git-native Split-and-Converge D
 ---
 
 ## 1. Communication, Naming & Language Discipline
-Follow these four strict formatting and clarity rules across every tree field and user-facing explanation:
+Follow these four strict clarity rules across every `-hypothesis`, step summary, and user-facing explanation:
 1. **Language Mirroring**: Always write `-goal`, `-hypothesis`, step summaries, and all user-facing explanations in the **user's conversation language** (e.g., Chinese when the user speaks Chinese). Keep standard engineering terms like `KV-Cache`, `BFS`, `IDF`, `Git Worktree`, or file/symbol names in backticks naturally.
-2. **Single Canonical ID (`node-X`) & Crisp `-hypothesis`**:
+2. **Single Canonical ID (`node-X`) & Spoken Verb-First `-hypothesis`**:
    - Refer to branches **ONLY** by their ExpTree node IDs (`node-0`, `node-1`, `node-4`).
    - **NEVER** put internal draft tags (`[NOVEL_CLEAR]`, `H1`/`H2`/`H3'`, `Candidate A/B`) into `-hypothesis`, commit messages, or user-facing replies.
-   - Keep `-hypothesis` concise: **12–28 Chinese characters (or <= 12 English words)** using `<mechanism> + <problem solved>`, with **no parenthetical walls of text**.
-3. **Action-First Engineering Prose (Zero Jargon Stacking)**:
-   - Never stack >2 obscure modifiers into invented paper-ese names.
-   - Explain any node's improvement in 3 clear parts: **(1) Baseline pain point -> (2) Concrete mechanism (input -> action -> output) -> (3) Measured metric change**.
-   - Standard technical terms (`BFS`, `IDF`, `KV-Cache`) are welcome when immediately followed by half a sentence stating what they concretely do here. For multi-objective results, use intuitive terms like 「领先方案」「多目标权衡」「全面弱于」 rather than academic terms like 「帕累托前沿 / 被支配」.
-4. **Contrast Few-Shot (Follow Strictly)**:
-   - ❌ **Bad**: `[NOVEL_CLEAR H2] Supermodular Bridge-Bundle Set-Union Precedence Knapsack over Bipartite Rare-IDF Span Hypergraph` / “通过二部稀疏符号超图与集并先序背包实现超模桥接打包”
-   - ✅ **Good**: `按稀有符号做 4 跳关联打包，避免丢失多跳因果线索` / “以当前问题里的稀有代码标识符（函数名/变量名/报错词）为起点，沿共享符号最多追溯 4 跳，把整条因果链打包一起保留，防止留头尾却丢中间推理。”
+   - Keep `-hypothesis` concise (**12–26 Chinese chars or `<= 12` English words**) and phrase it as a **spoken verb-first action clause** (`改用…` / `缓存…` / `跳过…` / `只展开…` / `把 X 换成 Y`) you would say aloud to a teammate without looking up a paper.
+   - **NEVER** write verbless paper-title noun piles (`面向……的……`, `基于……的……`, `……建模与……坍缩`, `……投影筛选`) or obscure literal translations (`上镜图`, `坍缩`, `胞腔`) in `-hypothesis` or explanations.
+3. **Action-First Engineering Prose**:
+   - Explain any node's change in 3 plain parts: **(1) What was slow/broken -> (2) Concrete code change -> (3) Measured metric delta**.
+   - Avoid stacked abstract modifiers and use intuitive words like 「领先方案」「多目标权衡」「全面弱于」 rather than academic jargon.
+4. **Contrast Few-Shot (Follow Strictly — Notice Spoken Verbs vs. Paper Noun Piles)**:
+   - ❌ `目标上镜图不等式建模与单侧不可满足射线坍缩` → ✅ `用 t<=f(x) 代替等式，无解时直接剪掉整段区间`
+   - ❌ `跨目标轮次缓存并预置目标无关不可满足胞腔` → ✅ `复用上一轮的无解区域缓存，少重复算同样约束`
+   - ❌ `面向目标下界拓展的非对称可满足胞腔投影筛选` → ✅ `搜更小目标值时只展开下界方向，跳过多余投影`
+   - ❌ `Supermodular Bridge-Bundle Set-Union Knapsack over Sparse IDF Hypergraph` → ✅ `按稀有函数名做 4 跳关联打包，补齐中间因果上下文`
 
 ---
 
@@ -62,30 +64,23 @@ Before branching on any new exploratory mechanism (or non-obvious hybrid):
 2. Search academic papers and open-source repos for exact prior art.
 3. Proceed **ONLY** if the mechanism has a clear *Structural Delta* vs. closest prior art and does not overlap with pruned dead-ends in `exptree brief`.
 
-### Phase 3 — Orthogonal Hypothesis Branching (Sequential or Parallel Worktrees)
-1. Inspect current best/frontier nodes and pruned dead-ends:
-   ```bash
-   exptree brief -repo .
-   ```
-2. Fork each falsifiable hypothesis into an isolated worktree with a concise user-language `-hypothesis` (also works on `PRUNED` parent nodes to fix implementation bugs and retry):
-   ```bash
-   exptree branch -repo . -parent node-0 -agent worker-1 -hypothesis "<concise user-language mechanism>" -worktree
-   ```
-3. Implement ONLY the hypothesis inside `.git/exp-tree/worktrees/<node-id>`, then evaluate objectively (sync for fast suites, or `-detach` for multi-hour solver/GPU benchmarks):
-   ```bash
-   exptree eval -repo . -node <node-id> -cmd "python3 bench.py" -rollback=true
-   # Multi-hour detached run (default -timeout 0 = no forced kill, streams PROGRESS: lines):
-   exptree eval -repo . -node <node-id> -cmd "<long-cmd>" -detach
-   ```
-   - Live progress during long runs: emit `PROGRESS: <msg>` from scripts or push updates via `exptree step -node <id> -msg "..."`; external cluster jobs can finalize nodes via `exptree record -node <id> -from-file <log>` or `-metrics "k1=v1,k2=v2"`.
-   - Improvements or non-dominated candidates are auto-committed (`VALIDATED`); staged re-evaluation on the same node cleanly updates metrics and recomputes the best node.
-   - Failures, regressions, or constraint-gate violations commit a preserved snapshot onto `exp/<node-id>` (`PRUNED`), restore a clean workspace, and record structured metrics + root-cause digest.
-
-### Phase 4 — Multi-Branch Convergence (`N-to-1`)
-When 2 or more validated / leading (`★`) branches achieve complementary strengths:
-1. Run `exptree converge -repo . -parents node-2,node-3 -cmd "python3 bench.py"` (optionally pass `-supervisor codex|opencode|pi|dsh`).
-2. Integrate both mechanisms semantically in the synthesis worktree (resolving data-structure/loop interactions rather than blind concatenation) and run `exptree eval -repo . -node <synth-id>`.
-3. Sync the winning commit to `main` and summarize **empirical gains** and **structural delta vs. prior art** using Section 1's clear action-first prose and canonical `node-X` IDs.
+### Phase 3 — Autonomous Multi-Wave Loop (Do NOT Stop After Wave-1)
+1. **Treat Wave-1 as the opening wave, NOT the final answer**: once `node-0` baseline is ready, run an autonomous multi-wave loop rather than stopping after one wave to present "Wave-2 suggestions" and wait for confirmation.
+2. **In each Wave $k$**:
+   - Inspect `exptree brief -repo .`, then fork 2–3 orthogonal hypotheses into isolated worktrees using **spoken verb-first** `-hypothesis` strings:
+     ```bash
+     exptree branch -repo . -parent node-0 -agent worker-1 -hypothesis "<spoken verb-first action>" -worktree
+     ```
+   - Implement inside `.git/exp-tree/worktrees/<node-id>`, then evaluate objectively (`-timeout 0` unlimited by default; `-detach` for multi-hour jobs; serialize heavy multi-core benchmark panels when concurrent runs would contend for CPUs).
+   - Live progress during long runs: emit `PROGRESS: <msg>` from scripts or push updates via `exptree step -node <id> -msg "..."`; external cluster jobs finalize via `exptree record -node <id> -from-file <log>` or `-metrics "k1=v1,k2=v2"`.
+3. **Transition automatically to Wave $k+1$** after each wave:
+   - **Deepen the winner** (`-parent <best-id>`), **stack / converge complementary gains** (`exptree converge -repo . -parents node-X,node-Y -cmd "<cmd>"` + optional `-supervisor`), **rescue bug-pruned nodes** (`-parent <pruned-id>`), or **revisit earlier failures** (`-revisits <pruned-id>`) when new gains remove their blocker.
+4. **Stop and report to the user ONLY when one of these fires**:
+   - **Plateau / Anti-Thrash**: `[防空转提醒]` fires (`>= 3` consecutive prunes), or 2 consecutive waves yield `< 1× MAD` / zero new improvements;
+   - **Budget Reached**: explicit wave/time budget completes (when unspecified, run at least **2–3 full waves** including deepening or convergence before pausing; when continuous/overnight runs are requested, iterate until plateau or manual interrupt);
+   - **Scope / Benchmark Escalation**: advancing requires switching to a much heavier multi-hour suite, editing eval scripts, or fixing persistent soundness errors;
+   - **Target Met**: explicit target metric achieved.
+5. When stopping at a milestone, run `exptree finalize -repo .` to export a clean winner branch + diff summary and report gains and structural deltas using Section 1's plain prose.
 
 ### Phase 5 — Resuming an Interrupted Session
 If a run stopped mid-exploration and `exptree view` shows stale non-root `EXPLORING` orphan nodes with no live workers:

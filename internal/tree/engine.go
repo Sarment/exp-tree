@@ -592,8 +592,15 @@ func (e *Engine) CompileContextBrief(nodeID string) string {
 		}
 		fmt.Fprintf(&b, "- 🛡️ 科学硬约束门禁 (一票否决): `%s`\n", strings.Join(cs, ", "))
 	}
-	if streak := TrailingConsecutivePrunes(e.state); streak >= 3 {
+	streak := TrailingConsecutivePrunes(e.state)
+	if streak >= 3 {
 		fmt.Fprintf(&b, "- ⚠️ [防空转提醒] 最近已连续 %d 次分支被剪枝/失败，请先停下来检视约束、退回更早领先节点或通过 `exptree converge` 切换思路。\n", streak)
+	}
+	if len(e.state.ParetoFrontIDs) < 2 && streak < 3 {
+		if best, ok := e.state.Nodes[e.state.BestNodeID]; ok && best.ID != e.state.RootID && len(best.ChildrenIDs) == 0 {
+			fmt.Fprintf(&b, "- 🔁 [下一轮推进建议] 当前领先节点 `%s` 尚未继续向下深挖，请勿跑完首轮即停步：可基于 `%s` 派生下一波改进分支，或将其他已验证分支的有效机制合流叠加验证。\n",
+				best.ID, best.ID)
+		}
 	}
 	if curr.Status.IsSuccess() && curr.ID != e.state.RootID && HasPrunedNode(e.state) {
 		fmt.Fprintf(&b, "- 💡 [已剪枝分支前提是否改变] 本次突破后，请顺带检视此前失败分支的淘汰假设是否已被推翻；若成立可用 `exptree branch -revisits <node-id>` 标记重审。\n")

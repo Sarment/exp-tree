@@ -24,19 +24,21 @@ Each Antigravity conversation binds 1-to-1 to its own experiment tree in `~/.gem
   - `[ExpTree · <node-id> Diff](sidecar://exptree/exp_board/?repo=<URL-encoded-repo>&node=<node-id>&tab=changes)`
 
 ## 2. Communication, Naming & Language Discipline
-Follow these four strict formatting and clarity rules across every tree field and user-facing explanation:
+Follow these four strict clarity rules across every `-hypothesis`, step summary, and user-facing explanation:
 1. **Language Mirroring**: Always write `-goal`, `-hypothesis`, step summaries, and all user-facing explanations in the **user's conversation language** (e.g., Chinese when the user speaks Chinese). Keep standard engineering terms like `KV-Cache`, `BFS`, `IDF`, `Git Worktree`, or file/symbol names in backticks naturally.
-2. **Single Canonical ID (`node-X`) & Crisp `-hypothesis`**:
+2. **Single Canonical ID (`node-X`) & Spoken Verb-First `-hypothesis`**:
    - Refer to branches **ONLY** by their ExpTree node IDs (`node-0`, `node-1`, `node-4`).
    - **NEVER** put internal draft tags (`[NOVEL_CLEAR]`, `H1`/`H2`/`H3'`, `Candidate A/B`) into `-hypothesis`, commit messages, or user-facing replies.
-   - Keep `-hypothesis` concise: **12–28 Chinese characters (or <= 12 English words)** using the `<mechanism> + <problem solved>` structure, with **no parenthetical walls of text**.
-3. **Action-First Engineering Prose (Zero Jargon Stacking)**:
-   - Never stack >2 obscure modifiers into invented paper-ese names.
-   - Explain any node's improvement in 3 clear parts: **(1) Baseline pain point -> (2) Concrete mechanism (input -> action -> output) -> (3) Measured metric change**.
-   - Standard technical terms (`BFS`, `IDF`, `KV-Cache`) are welcome, provided you immediately follow them with half a sentence explaining what they concretely do here. For multi-objective results, use intuitive terms like 「领先方案」「多目标权衡」「全面弱于」 rather than academic terms like 「帕累托前沿 / 被支配」.
-4. **Contrast Few-Shot (Follow Strictly)**:
-   - ❌ **Bad**: `[NOVEL_CLEAR H2] Supermodular Bridge-Bundle Set-Union Precedence Knapsack over Bipartite Rare-IDF Span Hypergraph` / “通过二部稀疏符号超图与集并先序背包实现超模桥接打包”
-   - ✅ **Good**: `按稀有符号做 4 跳关联打包，避免丢失多跳因果线索` / “以当前问题里的稀有代码标识符（函数名/变量名/报错词）为起点，沿共享符号最多追溯 4 跳，把整条因果链打包一起保留，防止留头尾却丢中间推理。”
+   - Keep `-hypothesis` concise (**12–26 Chinese chars or `<= 12` English words**) and phrase it as a **spoken verb-first action clause** (`改用…` / `缓存…` / `跳过…` / `只展开…` / `把 X 换成 Y`) you would say aloud to a teammate without looking up a paper.
+   - **NEVER** write verbless paper-title noun piles (`面向……的……`, `基于……的……`, `……建模与……坍缩`, `……投影筛选`) or obscure literal translations (`上镜图`, `坍缩`, `胞腔`) in `-hypothesis` or explanations.
+3. **Action-First Engineering Prose**:
+   - Explain any node's change in 3 plain parts: **(1) What was slow/broken -> (2) Concrete code change -> (3) Measured metric delta**.
+   - Avoid stacked abstract modifiers and use intuitive words like 「领先方案」「多目标权衡」「全面弱于」 rather than academic jargon.
+4. **Contrast Few-Shot (Follow Strictly — Notice Spoken Verbs vs. Paper Noun Piles)**:
+   - ❌ `目标上镜图不等式建模与单侧不可满足射线坍缩` → ✅ `用 t<=f(x) 代替等式，无解时直接剪掉整段区间`
+   - ❌ `跨目标轮次缓存并预置目标无关不可满足胞腔` → ✅ `复用上一轮的无解区域缓存，少重复算同样约束`
+   - ❌ `面向目标下界拓展的非对称可满足胞腔投影筛选` → ✅ `搜更小目标值时只展开下界方向，跳过多余投影`
+   - ❌ `Supermodular Bridge-Bundle Set-Union Knapsack over Sparse IDF Hypergraph` → ✅ `按稀有函数名做 4 跳关联打包，补齐中间因果上下文`
 
 ## 3. End-to-End Scientific Exploration Lifecycle (Readiness-Gated + Novelty-Checked)
 Follow the real scientific cadence — enter at whichever stage matches what is already settled, never force code before direction and baseline are aligned:
@@ -70,15 +72,23 @@ Follow the real scientific cadence — enter at whichever stage matches what is 
    - Before dispatching ANY `exp-worker` on a new exploratory idea (and before `exp-synthesizer` proposes a non-obvious hybrid), send the candidate mechanism(s) to `exp-scout` (Mode B) to run targeted arXiv / scholar / GitHub prior-art searches:
      - If `exp-scout` returns `COLLISION_PUBLISHED` ❌: **DROP IT IMMEDIATELY** (do NOT spawn `exp-worker` on it unless the user explicitly asked to reproduce that baseline).
      - Only hypotheses cleared as `NOVEL_CLEAR` ✅ (with documented *Nearest Prior Art* + *Structural Delta*) AND non-overlapping with existing `ExpTree` nodes may be dispatched to `exp-worker`!
-4. **Phase 3 — Parallel Orthogonal Exploration & Long-Running Evaluations (`exp-worker` × K)**:
-   - Launch 2–3 `exp-worker` subagents **in parallel** via `invoke_subagent` ONLY on novelty-cleared hypotheses, each in an isolated `-worktree`. Give each worker a concise user-language `-hypothesis` (12–28 Chinese chars or <=12 English words, no `H1/H2` or `[NOVEL_CLEAR]` prefixes).
-   - **Long-Running / Multi-Hour Benchmarks** (e.g. SMT/OMT suites, multi-hour GPU training):
-     - Outer `exptree eval` does **not** impose a timeout (`-timeout 0` by default), leaving per-instance timeouts to the solver itself.
-     - Pass `-detach` on `exptree eval` / `exptree up` to run in a detached background session (`setsid`) that survives SSH/terminal disconnect while writing logs under `.git/exp-tree/logs/<node-id>.log`.
-     - Benchmark scripts can emit `PROGRESS: <status>` lines (streamed automatically into the node's live step in the sidebar), or external schedulers (Slurm/SSH workers) can push live updates via `exptree step -node <id> -msg "..."` and finalize via `exptree record -node <id> -from-file <log>` or `-metrics "k1=v1,k2=v2"`.
-     - Staged evaluation is supported on the same node (e.g. smoke sanity run first, then update final metrics with a full-suite `exptree eval` or `exptree record`).
-5. **Phase 4 — Triage, Retry, or Converge (`exp-synthesizer`)**:
-   - Inspect `exptree brief -repo "$REPO"`: rescue bug-pruned novel branches via `-parent <pruned-node-id>`, invoke `exp-synthesizer` when $\ge 2$ complementary leading (`★`) branches emerge, sync the winning commit to `main`, and report both **empirical gains** and **novelty delta vs. prior art** using Section 2's clear action-first prose and canonical `node-X` IDs.
+4. **Phase 3 — Autonomous Multi-Wave Loop (Do NOT Stop After Wave-1)**:
+   - Once Stage 0 & `node-0` are settled, treat Wave-1 as the **first step** of an autonomous multi-wave search, **NOT** the final deliverable. **Never** run 1 wave of 2–3 workers and pause to present a "Wave-2 suggestions" wishlist waiting for user confirmation!
+   - **In each Wave $k$**:
+     - Dispatch 2–3 `exp-worker` subagents in parallel on novelty-cleared, **spoken verb-first** `-hypothesis` edits inside isolated `-worktree` sandboxes.
+     - *(CPU-contention awareness)*: Workers may edit and compile in parallel worktrees, but serialize heavy multi-core benchmark panels (e.g. 100-core solver suites) when concurrent runs would distort latency/throughput measurements.
+     - **Long-Running / Multi-Hour Benchmarks**: Outer `exptree eval` has `-timeout 0` by default; pass `-detach` for multi-hour `setsid` background runs, emit `PROGRESS: <status>` (or `exptree step` / `exptree record` for Slurm/SSH queues), and stage sanity checks before full-suite `exptree eval` / `exptree record`.
+   - **Transition Automatically from Wave $k$ to Wave $k+1$**:
+     - Run `exptree brief -repo "$REPO"` and inspect instance/metric diffs across finished nodes:
+       1. **Deepen the winner**: fork Wave $k+1$ directly from the leading/best node (`-parent <best-id>`) rather than piling everything flatly under `node-0`;
+       2. **Converge complementary gains (`exp-synthesizer`)**: when $\ge 2$ leading (`★`) branches exist OR an orthogonal mechanism (e.g. `node-2`'s caching) can stack onto `node-1`'s breakthrough, invoke `exp-synthesizer` (`exptree converge`) and verify on the benchmark;
+       3. **Rescue or revisit**: fix bug-pruned nodes (`-parent <pruned-id>`), or revisit an earlier failure when a new breakthrough removes its blocker (`-revisits <pruned-id>`).
+   - **Explicit Stop Conditions (Stop and report to the user ONLY when one of these holds)**:
+     1. **Plateau / Anti-Thrash**: `[防空转提醒]` triggers (`>= 3` consecutive prunes), or 2 consecutive waves yield `< 1× MAD` / zero new improvements;
+     2. **Budget Reached**: User's explicit wave/time budget completes; if unspecified (e.g., *"初步推进"*), run **at least 2–3 full waves** (including deepening or convergence on Wave-1 winners) before giving a milestone report; if user asks to run continuously / overnight (`/goal`), keep iterating until plateau or manual interrupt;
+     3. **Scope / Benchmark Escalation**: Advancing requires switching to a much heavier multi-hour benchmark suite, changing eval scripts, or resolving a persistent soundness bug;
+     4. **Explicit Target Met**: The user's concrete target metric is reached.
+   - Only when stopping (or reaching a milestone), export a clean branch if helpful (`exptree finalize -repo "$REPO"`) and report **empirical gains** and **structural delta vs. prior art** using Section 2's plain action-first prose and canonical `node-X` IDs.
 6. **Resuming an Interrupted Session (Automatic Orphan Reconciliation)**:
    - Whenever resuming an existing bound tree in a restarted/re-opened conversation (or when `exptree view` / `exptree brief` shows stale non-root `EXPLORING` nodes from an interrupted session with no active subagents running), run `exptree resume -repo "$REPO"` **first** before branching new work. `exptree resume` checks PID liveness (`STILL_ALIVE` keeps active multi-hour jobs running untouched!), evaluates finished leftover worktrees, or cleanly prunes dead interrupted branches (`PRUNED`). *(Skip `exptree resume` if only `node-0` is an unmeasured placeholder—finalize `node-0` with `exptree up` instead.)*
 
