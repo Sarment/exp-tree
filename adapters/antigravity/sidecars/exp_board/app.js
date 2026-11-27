@@ -90,6 +90,9 @@
       goalSingle: (m, dir) => `Optimize ${m} ${dir}`,
       paretoTitle: 'Multi-Objective Trade-off',
       paretoNote: 'Top-right is better',
+      paretoPlot: 'Plot',
+      paretoTable: 'Table',
+      tblNode: 'Node',
       beatsBase: 'Beats baseline',
       higherBetter: 'higher is better',
       lowerBetter: 'lower is better',
@@ -203,6 +206,9 @@
       goalSingle: (m, dir) => `优化 ${m} ${dir}`,
       paretoTitle: '多目标权衡',
       paretoNote: '越靠右上越优',
+      paretoPlot: '散点图',
+      paretoTable: '表格',
+      tblNode: '节点',
       beatsBase: '优于基线',
       higherBetter: '越大越好',
       lowerBetter: '越小越好',
@@ -317,8 +323,11 @@
     collapsedFiles: new Set(),
     mapZoom: 1,
     mapFitPending: true,
+    paretoView: 'plot', // 'plot' | 'table'
     paretoYIdx: 0,
     paretoXIdx: 1,
+    paretoSortCol: '',
+    paretoSortDir: 'best',
     menuOpen: false,
     rebindListOpen: false,
     lastReposSig: '',
@@ -684,6 +693,8 @@
     S.mapFitPending = true;
     S.paretoYIdx = 0;
     S.paretoXIdx = 1;
+    S.paretoSortCol = '';
+    S.paretoSortDir = 'best';
   }
 
   function setMenuOpen(open) {
@@ -1195,15 +1206,134 @@
     return out;
   }
 
-  // 2D Pareto projection plot (supports arbitrary N>=2 objectives with switchable X/Y axes).
+  function buildParetoTableInner(ordered, objs, pFrontIds) {
+    const rows = ordered.filter((n) => n.metrics && objs.some((o) => typeof n.metrics[o.name] === 'number' && Number.isFinite(n.metrics[o.name])));
+    if (!rows.length) return '';
+
+    const legalSucc = rows.filter((n) => (n.status === 'VALIDATED' || n.status === 'CONVERGED') && !isViolation(n));
+    const bestBasis = legalSucc.length ? legalSucc : rows.filter((n) => !isViolation(n));
+    const isEligible = (n) => (legalSucc.length ? ((n.status === 'VALIDATED' || n.status === 'CONVERGED') && !isViolation(n)) : !isViolation(n));
+
+    const colBest = {};
+    for (const o of objs) {
+      const vals = bestBasis
+        .map((n) => n.metrics[o.name])
+        .filter((v) => typeof v === 'number' && Number.isFinite(v));
+      if (vals.length) {
+        colBest[o.name] = o.higher_is_better ? Math.max(...vals) : Math.min(...vals);
+      }
+    }
+    const isColBest = (n, o, v) => {
+      if (!isEligible(n) || typeof v !== 'number' || !Number.isFinite(v) || colBest[o.name] === undefined) return false;
+      const b = colBest[o.name];
+      return Math.abs(v - b) <= 1e-12 * Math.max(1, Math.abs(b));
+    };
+
+    const sortedRows = [...rows];
+    const sortObj = S.paretoSortCol ? objs.find((o) => o.name === S.paretoSortCol) : null;
+    if (sortObj) {
+      sortedRows.sort((a, b) => {
+        const va = a.metrics[sortObj.name];
+        const vb = b.metrics[sortObj.name];
+        const ha = typeof va === 'number' && Number.isFinite(va);
+        const hb = typeof vb === 'number' && Number.isFinite(vb);
+        if (!ha && !hb) return 0;
+        if (!ha) return 1;
+        if (!hb) return -1;
+        let cmp = sortObj.higher_is_better ? (vb - va) : (va - vb); // 'best' first
+        if (S.paretoSortDir === 'worst') cmp = -cmp;
+        return cmp;
+      });
+    }
+
+    const thCols = objs.map((o) => {
+      const active = S.paretoSortCol === o.name;
+      const sortArrow = active ? (S.paretoSortDir === 'best' ? ' ▾' : ' ▴') : '';
+      const dirTxt = o.higher_is_better ? t('higherBetter') : t('lowerBetter');
+      return `<th class="num sortable ${active ? 'sorted' : ''}" data-pareto-sort="${esc(o.name)}" title="${esc(o.name)} · ${esc(dirTxt)}">${esc(o.name)} ${o.higher_is_better ? '↑' : '↓'}${sortArrow}</th>`;
+    }).join('');
+
+    const bodyRows = sortedRows.map((n) => {
+      const onFront = pFrontIds.includes(n.id);
+      const viol = isViolation(n);
+      const isSel = S.selectedId === n.id;
+      const dotCls = viol ? 'violation' : (n.status === 'PRUNED' ? 'prune' : (n.status === 'CONVERGED' ? 'conv' : (onFront ? 'lead' : (n.status === 'VALIDATED' ? 'pass' : 'run'))));
+      const rowCls = [
+        n.status === 'PRUNED' ? 'is-pruned' : '',
+        viol ? 'is-violation' : '',
+        onFront ? 'is-lead' : '',
+        isSel ? 'selected' : '',
+      ].filter(Boolean).join(' ');
+      const tds = objs.map((o) => {
+        const v = n.metrics[o.name];
+        if (typeof v !== 'number' || !Number.isFinite(v)) {
+          return '<td class="num muted">—</td>';
+        }
+        const best = isColBest(n, o, v);
+        return `<td class="num ${best ? 'col-best' : ''}">${best ? `<strong>${esc(fmtNum(v))}</strong>` : esc(fmtNum(v))}</td>`;
+      }).join('');
+      return `
+        <tr class="pareto-tr ${rowCls}" data-jump-node="${esc(n.id)}" title="${esc(hypoParts(n).title)}">
+          <td class="col-node"><span class="pt-dot ${dotCls}"></span><span class="pt-id">${esc(n.id)}</span>${onFront ? '<span class="pt-star" title="Pareto">★</span>' : ''}</td>
+          ${tds}
+        </tr>`;
+    }).join('');
+
+    return `
+      <div class="pareto-table-wrap">
+        <table class="pareto-table">
+          <thead>
+            <tr>
+              <th class="col-node sortable ${!S.paretoSortCol ? 'sorted' : ''}" data-pareto-sort="">${esc(t('tblNode'))}</th>
+              ${thCols}
+            </tr>
+          </thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  // 2D Pareto projection plot + N-objective comparison table toggle.
   function buildParetoPlot(ordered, objs, pFrontIds, root) {
+    const isTable = S.paretoView === 'table';
+    const hasTableRows = ordered.some((n) => n.metrics && objs.some((o) => typeof n.metrics[o.name] === 'number' && Number.isFinite(n.metrics[o.name])));
+
     let yIdx = Math.max(0, Math.min(objs.length - 1, S.paretoYIdx || 0));
     let xIdx = Math.max(0, Math.min(objs.length - 1, S.paretoXIdx ?? 1));
     if (xIdx === yIdx) xIdx = (yIdx + 1) % objs.length;
     const objY = objs[yIdx];
     const objX = objs[xIdx];
     const pts = ordered.filter((n) => n.metrics && typeof n.metrics[objX.name] === 'number' && typeof n.metrics[objY.name] === 'number');
-    if (!pts.length) return '';
+
+    if (isTable) {
+      if (!hasTableRows) return '';
+    } else if (!pts.length) {
+      return hasTableRows ? buildParetoPlotTableShell(ordered, objs, pFrontIds) : '';
+    }
+
+    const optsHtml = (curIdx) => objs.map((o, idx) => `<option value="${idx}" ${idx === curIdx ? 'selected' : ''}>${esc(o.name)}</option>`).join('');
+    const axisPicker = (!isTable && objs.length >= 3)
+      ? `<div class="pareto-axes">
+          <label>${esc(t('axisY'))}<select class="pareto-axis-sel" data-pareto-axis="y">${optsHtml(yIdx)}</select></label>
+          <label>${esc(t('axisX'))}<select class="pareto-axis-sel" data-pareto-axis="x">${optsHtml(xIdx)}</select></label>
+        </div>`
+      : '';
+    const viewToggle = `
+      <div class="segmented xs">
+        <button type="button" class="${!isTable ? 'on' : ''}" data-pareto-view="plot">${esc(t('paretoPlot'))}</button>
+        <button type="button" class="${isTable ? 'on' : ''}" data-pareto-view="table">${esc(t('paretoTable'))}</button>
+      </div>`;
+
+    if (isTable) {
+      return `
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">${esc(t('paretoTitle'))}</span>
+            <div class="pareto-head-ctrl">${viewToggle}</div>
+          </div>
+          ${buildParetoTableInner(ordered, objs, pFrontIds)}
+        </div>`;
+    }
     const W = 460, H = 212, padL = 54, padR = 18, padT = 22, padB = 34;
     const plotW = W - padL - padR;
     const plotH = H - padT - padB;
@@ -1327,18 +1457,11 @@
     const dir = (o) => (o.higher_is_better ? t('higherBetter') : t('lowerBetter'));
     const xTitle = `${objX.name} · ${dir(objX)}${axX.useLog ? ' · log' : ''}  →`;
     const yTitle = `↑  ${objY.name} · ${dir(objY)}${axY.useLog ? ' · log' : ''}`;
-    const optsHtml = (curIdx) => objs.map((o, idx) => `<option value="${idx}" ${idx === curIdx ? 'selected' : ''}>${esc(o.name)}</option>`).join('');
-    const headRight = objs.length >= 3
-      ? `<div class="pareto-axes">
-          <label>${esc(t('axisY'))}<select class="pareto-axis-sel" data-pareto-axis="y">${optsHtml(yIdx)}</select></label>
-          <label>${esc(t('axisX'))}<select class="pareto-axis-sel" data-pareto-axis="x">${optsHtml(xIdx)}</select></label>
-        </div>`
-      : `<span class="card-note">${esc(t('paretoNote'))}</span>`;
     return `
       <div class="card">
         <div class="card-head">
           <span class="card-title">${esc(t('paretoTitle'))}</span>
-          ${headRight}
+          <div class="pareto-head-ctrl">${axisPicker}${viewToggle}</div>
         </div>
         <svg class="pareto-svg" viewBox="0 0 ${W} ${H}">
           <rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="var(--et-field)" rx="3"/>
@@ -1349,6 +1472,20 @@
           <text x="${padL + plotW / 2}" y="${H - 5}" text-anchor="middle" class="ax-title">${esc(xTitle)}</text>
           <text x="${padL}" y="${padT - 8}" text-anchor="start" class="ax-title">${esc(yTitle)}</text>
         </svg>
+        <div class="pareto-foot-note">${esc(t('paretoNote'))}</div>
+      </div>`;
+  }
+
+  function buildParetoPlotTableShell(ordered, objs, pFrontIds) {
+    const inner = buildParetoTableInner(ordered, objs, pFrontIds);
+    if (!inner) return '';
+    return `
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">${esc(t('paretoTitle'))}</span>
+          <span class="card-note">${esc(t('paretoTable'))}</span>
+        </div>
+        ${inner}
       </div>`;
   }
 
@@ -2180,6 +2317,34 @@
         </div>
       </div>
     `;
+
+    el.querySelectorAll('[data-pareto-view]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        S.paretoView = btn.dataset.paretoView === 'table' ? 'table' : 'plot';
+        renderOverviewTab();
+      });
+    });
+
+    el.querySelectorAll('[data-pareto-sort]').forEach((th) => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.paretoSort || '';
+        if (!col) {
+          S.paretoSortCol = '';
+          S.paretoSortDir = 'best';
+        } else if (S.paretoSortCol === col) {
+          if (S.paretoSortDir === 'best') {
+            S.paretoSortDir = 'worst';
+          } else {
+            S.paretoSortCol = '';
+            S.paretoSortDir = 'best';
+          }
+        } else {
+          S.paretoSortCol = col;
+          S.paretoSortDir = 'best';
+        }
+        renderOverviewTab();
+      });
+    });
 
     el.querySelectorAll('[data-pareto-axis]').forEach((sel) => {
       sel.addEventListener('change', () => {
