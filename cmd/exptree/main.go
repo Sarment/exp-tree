@@ -178,6 +178,7 @@ func runUp(args []string) {
 	timeout := fs.Duration("timeout", 0, "Optional baseline evaluation timeout (0 = unlimited)")
 	detach := fs.Bool("detach", false, "Run baseline evaluation in detached background process")
 	serialEval := fs.Bool("serial-eval", false, "Serialize heavy evaluations on this repo via eval.lock")
+	maxInFlight := fs.Int("max-inflight", 0, "Max active/queued non-root branches (0 = auto 4 with -serial-eval, else unlimited)")
 	addr := fs.String("addr", "127.0.0.1:7421", "Web console listen address")
 	serve := fs.Bool("serve", true, "Keep HTTP & Web UI server running after initialization")
 	_ = fs.Parse(args)
@@ -204,6 +205,11 @@ func runUp(args []string) {
 	snap := eng.Snapshot()
 	prevSerial := snap.SerialEval
 	effectiveSerial := *serialEval || (!isFlagSet(fs, "serial-eval") && prevSerial)
+	prevMaxInFlight := snap.MaxInFlight
+	effectiveMaxInFlight := *maxInFlight
+	if !isFlagSet(fs, "max-inflight") {
+		effectiveMaxInFlight = prevMaxInFlight
+	}
 	isPlaceholder := snap.RootID != "" && len(snap.Nodes) == 1 &&
 		snap.Nodes[snap.RootID] != nil && snap.Nodes[snap.RootID].PrimaryScore == nil &&
 		snap.EvalCommand == ""
@@ -219,6 +225,9 @@ func runUp(args []string) {
 		_ = eng.SetEvalCommand(*evalCmd)
 		if effectiveSerial {
 			_ = eng.SetSerialEval(true)
+		}
+		if effectiveMaxInFlight > 0 {
+			_ = eng.SetMaxInFlight(effectiveMaxInFlight)
 		}
 		if len(objs) > 0 || len(cons) > 0 {
 			_ = eng.ConfigureMultiObjective(objs, cons)
@@ -251,8 +260,13 @@ func runUp(args []string) {
 				printEvalSummary(res)
 			}
 		}
-	} else if isFlagSet(fs, "serial-eval") {
-		_ = eng.SetSerialEval(*serialEval)
+	} else {
+		if isFlagSet(fs, "serial-eval") {
+			_ = eng.SetSerialEval(*serialEval)
+		}
+		if isFlagSet(fs, "max-inflight") {
+			_ = eng.SetMaxInFlight(*maxInFlight)
+		}
 	}
 
 	if cid := tree.ResolveConversationID(*conv); cid != "" {
@@ -277,6 +291,7 @@ func runInit(args []string) {
 	baseline := fs.Float64("baseline", 0, "Baseline metric value")
 	hasBaseline := fs.Bool("has-baseline", true, "Whether baseline score is known")
 	serialEval := fs.Bool("serial-eval", false, "Serialize heavy evaluations on this repo via eval.lock")
+	maxInFlight := fs.Int("max-inflight", 0, "Max active/queued non-root branches (0 = auto 4 with -serial-eval, else unlimited)")
 	_ = fs.Parse(args)
 
 	path := resolveStatePath(*repo, *statePath)
@@ -306,6 +321,9 @@ func runInit(args []string) {
 	if *serialEval {
 		_ = eng.SetSerialEval(true)
 	}
+	if *maxInFlight > 0 {
+		_ = eng.SetMaxInFlight(*maxInFlight)
+	}
 
 	if cid := tree.ResolveConversationID(*conv); cid != "" {
 		_, _ = tree.BindConversation(cid, *repo)
@@ -326,6 +344,7 @@ func runBranch(args []string) {
 	revisits := fs.String("revisits", "", "Optional earlier PRUNED node ID revisited after an assumption changed")
 	worktree := fs.Bool("worktree", false, "Create isolated .git/exp-tree/worktrees/<node-id> for parallel agents")
 	steps := fs.Int("steps", 2, "Expected verification steps")
+	force := fs.Bool("force", false, "Bypass max in-flight WIP cap when branching")
 	_ = fs.Parse(args)
 
 	if maybeProxyRemote("branch", args, *conv, isFlagSet(fs, "repo")) {
@@ -350,6 +369,7 @@ func runBranch(args []string) {
 		RevisitsNodeID: strings.TrimSpace(*revisits),
 		GitBranch:      fmt.Sprintf("exp/temp-%d", time.Now().UnixNano()%10000),
 		TotalSteps:     *steps,
+		Force:          *force,
 	})
 	if err != nil {
 		log.Fatalf("branch failed: %v", err)

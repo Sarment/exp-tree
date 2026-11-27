@@ -1,6 +1,8 @@
 package tree
 
 import (
+	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -63,5 +65,79 @@ func TestPrunePreservesNegativeMemoryAndUCBSelection(t *testing.T) {
 	rec := eng.RecommendNextExpansion(1.414)
 	if rec == nil || rec.ID != b2.ID {
 		t.Fatalf("expected UCB1 to recommend %s, got %+v", b2.ID, rec)
+	}
+}
+
+func TestMaxInFlightBackpressure(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	eng, err := OpenEngine(stateFile)
+	if err != nil {
+		t.Fatalf("open engine: %v", err)
+	}
+
+	base := 100.0
+	if _, err := eng.InitRoot("Backpressure test", "score", true, "sha-root", &base); err != nil {
+		t.Fatalf("init root: %v", err)
+	}
+	if err := eng.SetSerialEval(true); err != nil {
+		t.Fatalf("set serial eval: %v", err)
+	}
+
+	var nodes []*ExpNode
+	for i := 1; i <= 4; i++ {
+		n, bErr := eng.Branch(BranchInput{
+			ParentID:   "node-0",
+			AgentID:    fmt.Sprintf("worker-%d", i),
+			Hypothesis: fmt.Sprintf("Candidate %d", i),
+		})
+		if bErr != nil {
+			t.Fatalf("branch %d failed unexpectedly: %v", i, bErr)
+		}
+		nodes = append(nodes, n)
+	}
+
+	// 5th concurrent non-root active branch must be rejected with ErrInFlightLimitReached
+	if _, err := eng.Branch(BranchInput{
+		ParentID:   "node-0",
+		AgentID:    "worker-5",
+		Hypothesis: "Should hit WIP limit",
+	}); !errors.Is(err, ErrInFlightLimitReached) {
+		t.Fatalf("expected ErrInFlightLimitReached on 5th active branch, got %v", err)
+	}
+
+	// Brief shows 4/4 full queue watermark
+	brief := eng.CompileContextBrief("")
+	if !strings.Contains(brief, "[在途队列已满 4/4]") {
+		t.Fatalf("expected full queue watermark in brief, got:\n%s", brief)
+	}
+
+	// Explicit Force bypasses WIP cap
+	forced, err := eng.Branch(BranchInput{
+		ParentID:   "node-0",
+		AgentID:    "worker-forced",
+		Hypothesis: "Urgent forced fix",
+		Force:      true,
+	})
+	if err != nil {
+		t.Fatalf("forced branch failed: %v", err)
+	}
+
+	// Completing 2 active branches brings active count from 5 -> 3 (< 4), re-opening a slot
+	if _, err := eng.Validate(nodes[0].ID, 120.0, map[string]float64{"score": 120.0}, "sha-1"); err != nil {
+		t.Fatalf("validate failed: %v", err)
+	}
+	if _, _, err := eng.Prune(nodes[1].ID, "worse", nil); err != nil {
+		t.Fatalf("prune failed: %v", err)
+	}
+	_ = forced
+
+	// Validate winner leaves [下一轮推进建议] suppressed while still 3/4 active? Wait: when 3/4 < 4 it may nudge on validated node,
+	// whereas normal Branch now succeeds again (bringing count back to 4/4)
+	if _, err := eng.Branch(BranchInput{
+		ParentID:   nodes[0].ID,
+		AgentID:    "worker-6",
+		Hypothesis: "Refill freed slot",
+	}); err != nil {
+		t.Fatalf("expected branch to succeed once in-flight dropped below cap, got %v", err)
 	}
 }

@@ -76,7 +76,10 @@
       badgeViolate: 'Constraint failed',
       badgePruned: 'Pruned',
       badgeRun: 'Running',
+      badgeQueue: 'Queued',
       badgeSynth: 'Converging',
+      axisY: 'Y',
+      axisX: 'X',
       reqOp: (op, th) => `req ${op} ${th}`,
       revisitTag: (id) => `↻ Revisiting ${id}`,
       rootBase: 'Root baseline',
@@ -186,7 +189,10 @@
       badgeViolate: '违反约束',
       badgePruned: '已剪枝',
       badgeRun: '运行中',
+      badgeQueue: '排队中',
       badgeSynth: '融合中',
+      axisY: '纵轴',
+      axisX: '横轴',
       reqOp: (op, th) => `要求 ${op} ${th}`,
       revisitTag: (id) => `↻ 重审 ${id}`,
       rootBase: '根基线',
@@ -311,6 +317,8 @@
     collapsedFiles: new Set(),
     mapZoom: 1,
     mapFitPending: true,
+    paretoYIdx: 0,
+    paretoXIdx: 1,
     menuOpen: false,
     rebindListOpen: false,
     lastReposSig: '',
@@ -428,6 +436,16 @@
     return Boolean(n) && n.status === 'PRUNED' && /HARD_CONSTRAINT_VIOLATED|CONSTRAINT_GATE_FAILED/.test(n.prune_digest || '');
   }
 
+  // Distinguish a queued branch waiting on eval.lock from the actively executing one.
+  function isQueuedNode(n) {
+    if (!n || n.status !== 'EXPLORING' || !Array.isArray(n.steps) || !n.steps.length) return false;
+    const live = [...n.steps].reverse().find((s) => /^(进度[:：]|PROGRESS)/i.test(s.action || ''));
+    const latest = live || n.steps[n.steps.length - 1];
+    const msg = String(latest?.action || '');
+    if (/已获得评测槽位|running eval/i.test(msg)) return false;
+    return /排队|queued/i.test(msg);
+  }
+
   function statusBadge(n, bestId) {
     const pFront = S.tree?.pareto_front_ids || [];
     const isMulti = (S.tree?.objectives || []).length >= 2;
@@ -440,7 +458,10 @@
         if (n.id === S.tree?.root_id) return `<span class="badge muted">${esc(t('badgeBase'))}</span>`;
         return `<span class="badge pass-soft">${esc(t('badgePass'))}</span>`;
       case 'PRUNED': return isViolation(n) ? `<span class="badge prune">${esc(t('badgeViolate'))}</span>` : `<span class="badge muted">${esc(t('badgePruned'))}</span>`;
-      case 'EXPLORING': return `<span class="badge run live">${esc(t('badgeRun'))}</span>`;
+      case 'EXPLORING':
+        return isQueuedNode(n)
+          ? `<span class="badge queue">${esc(t('badgeQueue'))}</span>`
+          : `<span class="badge run live">${esc(t('badgeRun'))}</span>`;
       case 'SYNTHESIZING': return `<span class="badge conv live">${esc(t('badgeSynth'))}</span>`;
       default: return `<span class="badge muted">${esc(n.status)}</span>`;
     }
@@ -661,6 +682,8 @@
     S.pendingScrollFileIdx = null;
     S.collapsedFiles.clear();
     S.mapFitPending = true;
+    S.paretoYIdx = 0;
+    S.paretoXIdx = 1;
   }
 
   function setMenuOpen(open) {
@@ -1172,10 +1195,13 @@
     return out;
   }
 
-  // 2D Pareto plot: nice ticks, outlier-robust range, light baseline crosshair and collision-free labels.
+  // 2D Pareto projection plot (supports arbitrary N>=2 objectives with switchable X/Y axes).
   function buildParetoPlot(ordered, objs, pFrontIds, root) {
-    const objY = objs[0];
-    const objX = objs[1];
+    let yIdx = Math.max(0, Math.min(objs.length - 1, S.paretoYIdx || 0));
+    let xIdx = Math.max(0, Math.min(objs.length - 1, S.paretoXIdx ?? 1));
+    if (xIdx === yIdx) xIdx = (yIdx + 1) % objs.length;
+    const objY = objs[yIdx];
+    const objX = objs[xIdx];
     const pts = ordered.filter((n) => n.metrics && typeof n.metrics[objX.name] === 'number' && typeof n.metrics[objY.name] === 'number');
     if (!pts.length) return '';
     const W = 460, H = 212, padL = 54, padR = 18, padT = 22, padB = 34;
@@ -1276,7 +1302,11 @@
       const sx = x.toFixed(1), sy = y.toFixed(1);
       const lp = labelPos.get(n.id);
       const lx = lp.x.toFixed(1), ly = lp.y.toFixed(1);
-      const tip = `${n.id} · ${n.status}${p.pinned ? t('outOfRange') : ''}\n${objY.name} = ${fmtNum(n.metrics[objY.name])}\n${objX.name} = ${fmtNum(n.metrics[objX.name])}\n${hypoParts(n).title.slice(0, 60)}`;
+      const allObjLines = objs
+        .filter((o) => typeof n.metrics[o.name] === 'number')
+        .map((o) => `${o.name} = ${fmtNum(n.metrics[o.name])}`)
+        .join('\n');
+      const tip = `${n.id} · ${n.status}${p.pinned ? t('outOfRange') : ''}\n${allObjLines}\n${hypoParts(n).title.slice(0, 60)}`;
       const ring = isSel ? `<circle cx="${sx}" cy="${sy}" r="8.5" fill="none" stroke="var(--et-primary)" stroke-width="1.5"/>` : '';
       const label = (fill, weight) => `<text x="${lx}" y="${ly}" text-anchor="${lp.anchor}" class="ax-label" font-weight="${weight}" fill="${fill}">${esc(n.id.replace('node-', '#'))}</text>`;
       let glyph;
@@ -1297,11 +1327,18 @@
     const dir = (o) => (o.higher_is_better ? t('higherBetter') : t('lowerBetter'));
     const xTitle = `${objX.name} · ${dir(objX)}${axX.useLog ? ' · log' : ''}  →`;
     const yTitle = `↑  ${objY.name} · ${dir(objY)}${axY.useLog ? ' · log' : ''}`;
+    const optsHtml = (curIdx) => objs.map((o, idx) => `<option value="${idx}" ${idx === curIdx ? 'selected' : ''}>${esc(o.name)}</option>`).join('');
+    const headRight = objs.length >= 3
+      ? `<div class="pareto-axes">
+          <label>${esc(t('axisY'))}<select class="pareto-axis-sel" data-pareto-axis="y">${optsHtml(yIdx)}</select></label>
+          <label>${esc(t('axisX'))}<select class="pareto-axis-sel" data-pareto-axis="x">${optsHtml(xIdx)}</select></label>
+        </div>`
+      : `<span class="card-note">${esc(t('paretoNote'))}</span>`;
     return `
       <div class="card">
         <div class="card-head">
           <span class="card-title">${esc(t('paretoTitle'))}</span>
-          <span class="card-note">${esc(t('paretoNote'))}</span>
+          ${headRight}
         </div>
         <svg class="pareto-svg" viewBox="0 0 ${W} ${H}">
           <rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="var(--et-field)" rx="3"/>
@@ -1499,8 +1536,12 @@
       parts.push(`<circle cx="${nx}" cy="${midY}" r="4.5" fill="var(--et-card)" stroke="${pc}" stroke-width="1.6"/>`);
       parts.push(`<path d="M ${nx - 2} ${midY - 2} L ${nx + 2} ${midY + 2} M ${nx + 2} ${midY - 2} L ${nx - 2} ${midY + 2}" stroke="${pc}" stroke-width="1.4"/>`);
     } else if (st === 'EXPLORING' || st === 'SYNTHESIZING') {
-      parts.push(`<circle class="pulse-ring" cx="${nx}" cy="${midY}" r="8" fill="var(--et-run-bg)"/>`);
-      parts.push(`<circle cx="${nx}" cy="${midY}" r="4.5" fill="var(--et-run)"/>`);
+      if (isQueuedNode(row.node)) {
+        parts.push(`<circle cx="${nx}" cy="${midY}" r="4.5" fill="var(--et-card)" stroke="var(--et-queue)" stroke-width="1.8"/>`);
+      } else {
+        parts.push(`<circle class="pulse-ring" cx="${nx}" cy="${midY}" r="8" fill="var(--et-run-bg)"/>`);
+        parts.push(`<circle cx="${nx}" cy="${midY}" r="4.5" fill="var(--et-run)"/>`);
+      }
     } else {
       const fill = row.node.id === S.tree?.root_id ? 'var(--et-fg-muted)' : 'var(--et-pass)';
       parts.push(`<circle cx="${nx}" cy="${midY}" r="${row.node.id === bestId ? 5.5 : 4.5}" fill="${fill}" stroke="var(--et-card)" stroke-width="1.5"/>`);
@@ -1607,7 +1648,7 @@
       maxColRows = Math.max(maxColRows, cols[d].length);
     }
 
-    const CARD_W = 184, CARD_H = 66, GAP_X = 40, GAP_Y = 18;
+    const CARD_W = 204, CARD_H = 78, GAP_X = 36, GAP_Y = 12;
     const sortedDepths = Object.keys(cols).map(Number).sort((a, b) => a - b);
     const coords = {};
     const colIndexOfDepth = {};
@@ -1643,8 +1684,8 @@
     const pane = $('tree-map-container');
     const doFit = S.mapFitPending && pane && pane.clientWidth > 0;
     if (doFit) {
-      const fit = Math.min(1, (pane.clientWidth - 10) / totalW, 340 / totalH);
-      S.mapZoom = Math.max(0.55, Math.min(1, fit));
+      const fitX = (pane.clientWidth - 16) / totalW;
+      S.mapZoom = Math.max(0.80, Math.min(1, fitX));
     }
 
     const zoomLayer = $('map-zoom-layer');
@@ -1659,7 +1700,7 @@
     stage.style.transform = `scale(${S.mapZoom})`;
     stage.style.transformOrigin = '0 0';
     $('zoom-reset').textContent = `${Math.round(S.mapZoom * 100)}%`;
-    stage.classList.toggle('compact', S.mapZoom < 0.85);
+    stage.classList.toggle('compact', S.mapZoom < 0.55);
 
     svg.setAttribute('width', String(totalW));
     svg.setAttribute('height', String(totalH));
@@ -1726,12 +1767,14 @@
       const hp = hypoParts(n);
       const metricLine = isMultiM && n.metrics
         ? objsM.slice(0, 2).map((o) => `${fmtNum(n.metrics[o.name])}${o.higher_is_better ? '↑' : '↓'}`).join(' · ')
+          + (objsM.length > 2 ? ` +${objsM.length - 2}` : '')
         : fmtNum(n.primary_score);
       const metricTitle = isMultiM && n.metrics
         ? objsM.map((o) => `${o.name}=${fmtNum(n.metrics[o.name])}`).join(', ')
         : `${S.tree.metric_name || 'score'}=${fmtNum(n.primary_score)}`;
+      const queuedCls = isQueuedNode(n) ? 'queued' : '';
       return `
-        <div class="map-card ${esc(n.status)} ${isViolation(n) ? 'violation' : ''} ${isSelected ? 'selected' : ''} ${isMulti ? 'multi-picked' : ''} ${faded ? 'faded' : ''}" data-map-id="${esc(n.id)}" style="left:${c.x}px;top:${c.y}px;">
+        <div class="map-card ${esc(n.status)} ${queuedCls} ${isViolation(n) ? 'violation' : ''} ${isSelected ? 'selected' : ''} ${isMulti ? 'multi-picked' : ''} ${faded ? 'faded' : ''}" data-map-id="${esc(n.id)}" style="left:${c.x}px;top:${c.y}px;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
             <strong style="font-family:var(--et-mono);font-size:11px;">${esc(n.id)}</strong>
             ${statusBadge(n, S.tree.best_node_id)}
@@ -2137,6 +2180,20 @@
         </div>
       </div>
     `;
+
+    el.querySelectorAll('[data-pareto-axis]').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        const nextIdx = Number(sel.value);
+        if (sel.dataset.paretoAxis === 'y') {
+          if (nextIdx === S.paretoXIdx) S.paretoXIdx = S.paretoYIdx;
+          S.paretoYIdx = nextIdx;
+        } else {
+          if (nextIdx === S.paretoYIdx) S.paretoYIdx = S.paretoXIdx;
+          S.paretoXIdx = nextIdx;
+        }
+        renderOverviewTab();
+      });
+    });
 
     el.querySelectorAll('[data-jump-node]').forEach((item) => {
       item.addEventListener('click', () => {

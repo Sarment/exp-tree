@@ -15,9 +15,10 @@ import (
 )
 
 var (
-	ErrNodeNotFound    = errors.New("experiment node not found")
-	ErrCannotPruneRoot = errors.New("cannot prune the root baseline node")
-	ErrNeedMultiParent = errors.New("convergence node requires at least 2 distinct validated parent nodes")
+	ErrNodeNotFound         = errors.New("experiment node not found")
+	ErrCannotPruneRoot      = errors.New("cannot prune the root baseline node")
+	ErrNeedMultiParent      = errors.New("convergence node requires at least 2 distinct validated parent nodes")
+	ErrInFlightLimitReached = errors.New("in-flight branch limit reached")
 )
 
 type ForestState struct {
@@ -26,6 +27,7 @@ type ForestState struct {
 	EvalCommand    string              `json:"eval_command,omitempty"`
 	HigherIsBetter bool                `json:"higher_is_better"`
 	SerialEval     bool                `json:"serial_eval,omitempty"`
+	MaxInFlight    int                 `json:"max_inflight,omitempty"`
 	Objectives     []ObjectiveSpec     `json:"objectives,omitempty"`       // 多目标科学优化列表（为空或单元素时自动退化为传统单标量模式）
 	Constraints    []ConstraintSpec    `json:"constraints,omitempty"`      // 词典序一票否决硬约束门禁（如物理守恒律、误差上限）
 	ParetoFrontIDs []string            `json:"pareto_front_ids,omitempty"` // 当前非支配帕累托前沿节点集合
@@ -162,6 +164,7 @@ type BranchInput struct {
 	WorktreePath   string   `json:"worktree_path,omitempty"`
 	WorkerPID      int      `json:"worker_pid,omitempty"`
 	TotalSteps     int      `json:"total_steps,omitempty"`
+	Force          bool     `json:"force,omitempty"`
 }
 
 func (e *Engine) SetEvalCommand(evalCmd string) error {
@@ -183,6 +186,52 @@ func (e *Engine) SetSerialEval(enabled bool) error {
 	defer unlock()
 	e.state.SerialEval = enabled
 	return e.saveLocked()
+}
+
+// SetMaxInFlight sets the maximum number of concurrent/queued non-root active branches (0 = auto/unlimited).
+func (e *Engine) SetMaxInFlight(limit int) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	unlock := e.acquireFileLockReload()
+	defer unlock()
+	if limit < 0 {
+		limit = 0
+	}
+	e.state.MaxInFlight = limit
+	return e.saveLocked()
+}
+
+func (e *Engine) effectiveMaxInFlightLocked() int {
+	if e.state.MaxInFlight > 0 {
+		return e.state.MaxInFlight
+	}
+	if e.state.SerialEval {
+		return 4
+	}
+	return 0
+}
+
+func (e *Engine) inFlightNodeIDsLocked() []string {
+	var active []*ExpNode
+	for _, n := range e.state.Nodes {
+		if n == nil || n.ID == e.state.RootID {
+			continue
+		}
+		if n.Status == NodeExploring || n.Status == NodeSynthesizing {
+			active = append(active, n)
+		}
+	}
+	sort.Slice(active, func(i, j int) bool {
+		if active[i].CreatedAt.Equal(active[j].CreatedAt) {
+			return active[i].ID < active[j].ID
+		}
+		return active[i].CreatedAt.Before(active[j].CreatedAt)
+	})
+	ids := make([]string, len(active))
+	for i, n := range active {
+		ids[i] = n.ID
+	}
+	return ids
 }
 
 // StateDir returns the directory holding this tree's state file, or "" for in-memory engines.
@@ -265,6 +314,15 @@ func (e *Engine) Branch(in BranchInput) (*ExpNode, error) {
 	parents := normalizeParentIDs(in.ParentID, in.ParentIDs, e.state.ActiveNodeID)
 	if len(parents) == 0 {
 		return nil, ErrNodeNotFound
+	}
+	if !in.Force {
+		if cap := e.effectiveMaxInFlightLocked(); cap > 0 {
+			inflight := e.inFlightNodeIDsLocked()
+			if len(inflight) >= cap {
+				return nil, fmt.Errorf("%w (%d/%d: %s) — wait for a running/queued eval to finish before branching more (or pass -force)",
+					ErrInFlightLimitReached, len(inflight), cap, strings.Join(inflight, ", "))
+			}
+		}
 	}
 	primaryParent, ok := e.state.Nodes[parents[0]]
 	if !ok {
@@ -611,11 +669,22 @@ func (e *Engine) CompileContextBrief(nodeID string) string {
 		}
 		fmt.Fprintf(&b, "- 🛡️ 科学硬约束门禁 (一票否决): `%s`\n", strings.Join(cs, ", "))
 	}
+	inflight := e.inFlightNodeIDsLocked()
+	inFlightCap := e.effectiveMaxInFlightLocked()
+	if len(inflight) > 0 && inFlightCap > 0 {
+		if len(inflight) >= inFlightCap {
+			fmt.Fprintf(&b, "- ⏸️ [在途队列已满 %d/%d] 运行/排队中: `%s` — 请暂停分叉，等待最近一个节点出结果后再基于最新指标决定深挖、融合或补槽。\n",
+				len(inflight), inFlightCap, strings.Join(inflight, "`, `"))
+		} else {
+			fmt.Fprintf(&b, "- 🚦 [在途队列水位 %d/%d] 运行/排队中: `%s`（最多再补 %d 个就绪分支即可）\n",
+				len(inflight), inFlightCap, strings.Join(inflight, "`, `"), inFlightCap-len(inflight))
+		}
+	}
 	streak := TrailingConsecutivePrunes(e.state)
 	if streak >= 3 {
 		fmt.Fprintf(&b, "- ⚠️ [防空转提醒] 最近已连续 %d 次分支被剪枝/失败，请先停下来检视约束、退回更早领先节点或通过 `exptree converge` 切换思路。\n", streak)
 	}
-	if len(e.state.ParetoFrontIDs) < 2 && streak < 3 {
+	if len(e.state.ParetoFrontIDs) < 2 && streak < 3 && (inFlightCap == 0 || len(inflight) < inFlightCap) {
 		if best, ok := e.state.Nodes[e.state.BestNodeID]; ok && best.ID != e.state.RootID && len(best.ChildrenIDs) == 0 {
 			fmt.Fprintf(&b, "- 🔁 [下一轮推进建议] 当前领先节点 `%s` 尚未继续向下深挖，请勿跑完首轮即停步：可基于 `%s` 派生下一波改进分支，或将其他已验证分支的有效机制合流叠加验证。\n",
 				best.ID, best.ID)

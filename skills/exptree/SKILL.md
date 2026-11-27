@@ -72,7 +72,7 @@ Before branching on any new exploratory mechanism (or non-obvious hybrid):
      exptree branch -repo . -parent node-0 -agent worker-1 -hypothesis "<spoken verb-first action>" -worktree
      ```
    - Implement inside `.git/exp-tree/worktrees/<node-id>`, then evaluate objectively (`-timeout 0` unlimited by default; `-detach` for multi-hour jobs).
-   - **Eval/Prep Pipeline Overlap & Serial Eval Queue**: On single-slot machines (100+ CPU cores or saturated GPU node), enable `-serial-eval` on `init`/`up` (or pass `-serial` on `eval`) so heavy benchmarks queue cleanly behind `.git/exp-tree/eval.lock` (`排队等待评测槽位…` in sidebar, zero idle gap between jobs). While a long benchmark holds the eval slot, never sit idle on a bare timer: keep 1–2 next-wave branches researched, implemented, low-core compiled (e.g. `-j4`), smoke-tested, and enqueued via `exptree eval -detach -serial`.
+   - **Eval/Prep Pipeline Overlap & Sliding-Window Queue (`<= 4` In-Flight)**: On single-slot machines (100+ CPU cores or saturated GPU node), enable `-serial-eval` on `init`/`up` (which serializes evals on `.git/exp-tree/eval.lock` and defaults `-max-inflight` to **`4`**: `1 running + <= 3 queued`). While a long benchmark holds the eval slot, never sit idle on a bare timer: keep prepping, low-core compiling (`-j4`), smoke-testing, and enqueueing via `exptree eval -detach -serial` until `4/4` in-flight slots are filled, then STOP branching until an eval finishes and opens a replacement slot.
    - Live progress during long runs: emit `PROGRESS: <msg>` from scripts or push updates via `exptree step -node <id> -msg "..."`; external cluster jobs finalize via `exptree record -node <id> -from-file <log>` or `-metrics "k1=v1,k2=v2"`.
 3. **Transition automatically to Wave $k+1$** after each wave:
    - **Deepen the winner** (`-parent <best-id>`), **stack / converge complementary gains** (`exptree converge -repo . -parents node-X,node-Y -cmd "<cmd>"` + optional `-supervisor`), **rescue bug-pruned nodes** (`-parent <pruned-id>`), or **revisit earlier failures** (`-revisits <pruned-id>`) when new gains remove their blocker.
@@ -105,9 +105,9 @@ When running experiments on a remote Linux/GPU machine (`ssh <host>:/path`) whil
 ## 3. CLI & MCP Quick Reference
 
 **CLI (`exptree`, with compatibility symlink alias `etree`; or via MCP tools `etree_init`, `etree_brief`, `etree_branch`, `etree_eval`, `etree_converge`, `etree_recommend`):**
-- `exptree init -repo <DIR> -goal "<concise user-language goal>" -has-baseline=false` *(optional `-serial-eval`)*
-- `exptree up -repo <DIR> -goal "<concise user-language goal>" -objectives "m1:min,m2:max" -constraints "c1<=0.01" -eval-cmd "<cmd>" -serve=false` *(supports `-timeout 0`, `-detach`, `-serial-eval`)*
-- `exptree branch -repo <DIR> -parent <node-id> -agent <name> -hypothesis "<concise user-language mechanism>" -worktree` *(optional `-revisits <pruned-node-id>` when revisiting an invalidated discard)*
+- `exptree init -repo <DIR> -goal "<concise user-language goal>" -has-baseline=false` *(optional `-serial-eval`, `-max-inflight <N>`)*
+- `exptree up -repo <DIR> -goal "<concise user-language goal>" -objectives "m1:min,m2:max" -constraints "c1<=0.01" -eval-cmd "<cmd>" -serve=false` *(supports `-timeout 0`, `-detach`, `-serial-eval`, `-max-inflight <N>`)*
+- `exptree branch -repo <DIR> -parent <node-id> -agent <name> -hypothesis "<concise user-language mechanism>" -worktree` *(optional `-revisits <pruned-node-id>` when revisiting an invalidated discard; `-force` bypasses max-inflight cap)*
 - `exptree eval -repo <DIR> -node <node-id> -cmd "<cmd>" -rollback=true` *(default `-timeout 0`; add `-detach` for multi-hour background jobs; add `-serial` to queue behind `.git/exp-tree/eval.lock`)*
 - `exptree step -repo <DIR> -node <node-id> -msg "<progress>"` | `exptree record -repo <DIR> -node <node-id> -from-file <log>` *(or `-metrics "k=v"`)*
 - `exptree converge -repo <DIR> -parents node-2,node-3 -cmd "<cmd>"` *(or `-supervisor codex|opencode|pi|dsh`)*
