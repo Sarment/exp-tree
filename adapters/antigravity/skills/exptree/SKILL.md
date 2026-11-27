@@ -76,7 +76,7 @@ Follow the real scientific cadence — enter at whichever stage matches what is 
    - Once Stage 0 & `node-0` are settled, treat Wave-1 as the **first step** of an autonomous multi-wave search, **NOT** the final deliverable. **Never** run 1 wave of 2–3 workers and pause to present a "Wave-2 suggestions" wishlist waiting for user confirmation!
    - **In each Wave $k$**:
      - Dispatch 2–3 `exp-worker` subagents in parallel on novelty-cleared, **spoken verb-first** `-hypothesis` edits inside isolated `-worktree` sandboxes.
-     - *(CPU-contention awareness)*: Workers may edit and compile in parallel worktrees, but serialize heavy multi-core benchmark panels (e.g. 100-core solver suites) when concurrent runs would distort latency/throughput measurements.
+     - **Eval/Prep Pipeline Overlap & Serial Eval Queue**: On single-slot compute machines (100+ CPU cores or saturated GPU node), enable `-serial-eval` on `init`/`up` (or pass `-serial` on `eval`) so heavy evaluations queue cleanly behind repo-level `.git/exp-tree/eval.lock` (`排队等待评测槽位…` in sidebar, zero idle gap between jobs). While a long benchmark (`> 3 min`) holds the eval slot, **NEVER** sit idle waiting on a bare timer: keep `exp-scout` + `exp-worker` active in parallel worktrees researching, coding, compiling with low concurrency (e.g. `-j4`), running fast sanity smoke tests (which execute before acquiring `eval.lock`), and enqueueing the next 1–2 ready branches via `exptree eval -detach -serial`.
      - **Long-Running / Multi-Hour Benchmarks**: Outer `exptree eval` has `-timeout 0` by default; pass `-detach` for multi-hour `setsid` background runs, emit `PROGRESS: <status>` (or `exptree step` / `exptree record` for Slurm/SSH queues), and stage sanity checks before full-suite `exptree eval` / `exptree record`.
    - **Transition Automatically from Wave $k$ to Wave $k+1$**:
      - Run `exptree brief -repo "$REPO"` and inspect instance/metric diffs across finished nodes:
@@ -98,13 +98,13 @@ Follow the real scientific cadence — enter at whichever stage matches what is 
 - **Deploy `exptree` binary automatically to a remote SSH host**:
   `$BIN deploy -ssh <host>` *(auto-detects Linux/macOS amd64/arm64, skips if version matches, installs `~/.local/bin/exptree` + `etree`)* | `$BIN version`
 - **Initialize tree & auto-bind**:
-  `$BIN init -repo <REPO> -goal "<与用户语言一致的简洁目标描述>" -has-baseline=false` *(optional: `-conv <id> -metric <name> -minimize`)*
+  `$BIN init -repo <REPO> -goal "<与用户语言一致的简洁目标描述>" -has-baseline=false` *(optional: `-conv <id> -metric <name> -minimize -serial-eval`)*
 - **Finalize baseline + multi-objective specs & hard constraints + auto-eval `node-0`**:
-  `$BIN up -repo <REPO> -goal "<与用户语言一致的简洁目标描述>" -objectives "err:min,throughput:max" -constraints "leak<=1e-6" -eval-cmd "<cmd>" -serve=false` *(supports `-timeout 0`, `-detach`, or single-metric `-metric <name> -minimize=true|false`)*
+  `$BIN up -repo <REPO> -goal "<与用户语言一致的简洁目标描述>" -objectives "err:min,throughput:max" -constraints "leak<=1e-6" -eval-cmd "<cmd>" -serve=false` *(supports `-timeout 0`, `-detach`, `-serial-eval`, or single-metric `-metric <name> -minimize=true|false`)*
 - **Create hypothesis branch** (use `-worktree` for parallel workers):
   `$BIN branch -repo <REPO> -parent node-0 -agent exp-worker-1 -hypothesis "<与用户语言一致、12-28字具体机制>" -worktree` *(omitting `-parent` defaults to active node; branching from a `PRUNED` node is supported for retries; add `-revisits <pruned-id>` when an assumption changed)*
-- **Evaluate a branch (sync or detached long-running job)**:
-  `$BIN eval -repo <REPO> -node <node-id> -cmd "<cmd>" -rollback=true` *(default `-timeout 0` unlimited; add `-detach` for multi-hour background jobs; optional `-regex`, `-timeout 3h`)*
+- **Evaluate a branch (sync, queued, or detached long-running job)**:
+  `$BIN eval -repo <REPO> -node <node-id> -cmd "<cmd>" -rollback=true` *(default `-timeout 0` unlimited; add `-detach` for multi-hour background jobs; add `-serial` to queue behind `.git/exp-tree/eval.lock`; optional `-regex`, `-timeout 3h`)*
 - **Stream live progress or record external benchmark results**:
   `$BIN step -repo <REPO> -node <node-id> -msg "<120/1000 solved=96>"` *(updates live progress step in-place; add `-verified` for permanent milestone)*
   `$BIN record -repo <REPO> -node <node-id> -from-file <log>` *(or `-metrics "m1=42,c1=0"` to promote/prune using external Slurm/SSH results)*

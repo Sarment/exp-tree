@@ -68,6 +68,8 @@ func main() {
 		runSetup(os.Args[2:])
 	case "deploy":
 		runDeploy(os.Args[2:])
+	case "hook":
+		runHook(os.Args[2:])
 	case "version":
 		runVersion()
 	case "serve":
@@ -175,6 +177,7 @@ func runUp(args []string) {
 	constraints := fs.String("constraints", "", "Hard scientific gates, e.g. 'energy_drift<=0.001,ang_mom_drift<=1e-6'")
 	timeout := fs.Duration("timeout", 0, "Optional baseline evaluation timeout (0 = unlimited)")
 	detach := fs.Bool("detach", false, "Run baseline evaluation in detached background process")
+	serialEval := fs.Bool("serial-eval", false, "Serialize heavy evaluations on this repo via eval.lock")
 	addr := fs.String("addr", "127.0.0.1:7421", "Web console listen address")
 	serve := fs.Bool("serve", true, "Keep HTTP & Web UI server running after initialization")
 	_ = fs.Parse(args)
@@ -199,6 +202,8 @@ func runUp(args []string) {
 	}
 
 	snap := eng.Snapshot()
+	prevSerial := snap.SerialEval
+	effectiveSerial := *serialEval || (!isFlagSet(fs, "serial-eval") && prevSerial)
 	isPlaceholder := snap.RootID != "" && len(snap.Nodes) == 1 &&
 		snap.Nodes[snap.RootID] != nil && snap.Nodes[snap.RootID].PrimaryScore == nil &&
 		snap.EvalCommand == ""
@@ -212,6 +217,9 @@ func runUp(args []string) {
 			log.Fatalf("init root: %v", err)
 		}
 		_ = eng.SetEvalCommand(*evalCmd)
+		if effectiveSerial {
+			_ = eng.SetSerialEval(true)
+		}
 		if len(objs) > 0 || len(cons) > 0 {
 			_ = eng.ConfigureMultiObjective(objs, cons)
 		}
@@ -221,7 +229,7 @@ func runUp(args []string) {
 				if cid := tree.ResolveConversationID(*conv); cid != "" {
 					_, _ = tree.BindConversation(cid, *repo)
 				}
-				if err := launchDetachedEval(eng, *repo, *statePath, root.ID, *evalCmd, "", *timeout, false); err != nil {
+				if err := launchDetachedEval(eng, *repo, *statePath, root.ID, *evalCmd, "", *timeout, false, effectiveSerial); err != nil {
 					log.Fatalf("detach baseline eval failed: %v", err)
 				}
 				if !*serve {
@@ -235,6 +243,7 @@ func runUp(args []string) {
 					Command:      *evalCmd,
 					Timeout:      *timeout,
 					AutoRollback: false,
+					SerialEval:   effectiveSerial,
 				})
 				if err != nil {
 					log.Fatalf("baseline eval failed: %v", err)
@@ -242,6 +251,8 @@ func runUp(args []string) {
 				printEvalSummary(res)
 			}
 		}
+	} else if isFlagSet(fs, "serial-eval") {
+		_ = eng.SetSerialEval(*serialEval)
 	}
 
 	if cid := tree.ResolveConversationID(*conv); cid != "" {
@@ -265,6 +276,7 @@ func runInit(args []string) {
 	minimize := fs.Bool("minimize", false, "Set true if lower metric values are better")
 	baseline := fs.Float64("baseline", 0, "Baseline metric value")
 	hasBaseline := fs.Bool("has-baseline", true, "Whether baseline score is known")
+	serialEval := fs.Bool("serial-eval", false, "Serialize heavy evaluations on this repo via eval.lock")
 	_ = fs.Parse(args)
 
 	path := resolveStatePath(*repo, *statePath)
@@ -290,6 +302,9 @@ func runInit(args []string) {
 
 	if *evalCmd != "" {
 		_ = eng.SetEvalCommand(*evalCmd)
+	}
+	if *serialEval {
+		_ = eng.SetSerialEval(true)
 	}
 
 	if cid := tree.ResolveConversationID(*conv); cid != "" {
@@ -365,6 +380,7 @@ func runEval(args []string) {
 	regex := fs.String("regex", "", "Regex with capture group for metric float")
 	timeout := fs.Duration("timeout", 0, "Optional execution timeout budget (0 = unlimited)")
 	detach := fs.Bool("detach", false, "Run evaluation in detached background process (survives SSH/terminal close)")
+	serial := fs.Bool("serial", false, "Wait for repo-level eval.lock before starting evaluation")
 	rollback := fs.Bool("rollback", true, "Auto git rollback to parent on failure/regression")
 	_ = fs.Parse(args)
 
@@ -376,19 +392,21 @@ func runEval(args []string) {
 	if err != nil {
 		log.Fatalf("open engine: %v", err)
 	}
+	snap := eng.Snapshot()
 	command := *cmdStr
 	if command == "" {
-		command = eng.Snapshot().EvalCommand
+		command = snap.EvalCommand
 	}
 	if command == "" {
 		log.Fatal("-cmd is required (or set -eval-cmd during init)")
 	}
+	effectiveSerial := *serial || snap.SerialEval
 	if *detach {
 		targetNodeID := strings.TrimSpace(*nodeID)
 		if targetNodeID == "" {
-			targetNodeID = eng.Snapshot().ActiveNodeID
+			targetNodeID = snap.ActiveNodeID
 		}
-		if err := launchDetachedEval(eng, targetRepo, *statePath, targetNodeID, command, *regex, *timeout, *rollback); err != nil {
+		if err := launchDetachedEval(eng, targetRepo, *statePath, targetNodeID, command, *regex, *timeout, *rollback, effectiveSerial); err != nil {
 			log.Fatalf("detach eval failed: %v", err)
 		}
 		return
@@ -400,6 +418,7 @@ func runEval(args []string) {
 		MetricRegex:  *regex,
 		Timeout:      *timeout,
 		AutoRollback: *rollback,
+		SerialEval:   effectiveSerial,
 	})
 	if err != nil {
 		log.Fatalf("eval error: %v", err)
@@ -407,7 +426,7 @@ func runEval(args []string) {
 	printEvalSummary(res)
 }
 
-func launchDetachedEval(eng *tree.Engine, targetRepo, stateOverride, nodeID, command, regex string, timeout time.Duration, rollback bool) error {
+func launchDetachedEval(eng *tree.Engine, targetRepo, stateOverride, nodeID, command, regex string, timeout time.Duration, rollback, serial bool) error {
 	if nodeID == "" {
 		return fmt.Errorf("no target node ID resolved")
 	}
@@ -440,6 +459,9 @@ func launchDetachedEval(eng *tree.Engine, targetRepo, stateOverride, nodeID, com
 		"-node", nodeID,
 		"-cmd", command,
 		fmt.Sprintf("-rollback=%v", rollback),
+	}
+	if serial {
+		childArgs = append(childArgs, "-serial=true")
 	}
 	if stateOverride != "" {
 		childArgs = append(childArgs, "-state", stateOverride)
@@ -883,5 +905,5 @@ func runFinalize(args []string) {
 }
 
 func printUsage() {
-	fmt.Println("Usage: exptree <up|init|branch|eval|record|step|crossover|finalize|resume|recommend|view|brief|bind|focus|deploy|setup|version|mcp|serve> [flags]")
+	fmt.Println("Usage: exptree <up|init|branch|eval|record|step|crossover|finalize|resume|recommend|view|brief|bind|focus|deploy|hook|setup|version|mcp|serve> [flags]")
 }

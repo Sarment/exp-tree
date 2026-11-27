@@ -25,6 +25,7 @@ type ForestState struct {
 	MetricName     string              `json:"metric_name"`
 	EvalCommand    string              `json:"eval_command,omitempty"`
 	HigherIsBetter bool                `json:"higher_is_better"`
+	SerialEval     bool                `json:"serial_eval,omitempty"`
 	Objectives     []ObjectiveSpec     `json:"objectives,omitempty"`       // 多目标科学优化列表（为空或单元素时自动退化为传统单标量模式）
 	Constraints    []ConstraintSpec    `json:"constraints,omitempty"`      // 词典序一票否决硬约束门禁（如物理守恒律、误差上限）
 	ParetoFrontIDs []string            `json:"pareto_front_ids,omitempty"` // 当前非支配帕累托前沿节点集合
@@ -172,6 +173,24 @@ func (e *Engine) SetEvalCommand(evalCmd string) error {
 		e.state.EvalCommand = evalCmd
 	}
 	return e.saveLocked()
+}
+
+// SetSerialEval persists whether heavy evaluations for this tree should serialize on eval.lock.
+func (e *Engine) SetSerialEval(enabled bool) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	unlock := e.acquireFileLockReload()
+	defer unlock()
+	e.state.SerialEval = enabled
+	return e.saveLocked()
+}
+
+// StateDir returns the directory holding this tree's state file, or "" for in-memory engines.
+func (e *Engine) StateDir() string {
+	if e.statePath == "" {
+		return ""
+	}
+	return filepath.Dir(e.statePath)
 }
 
 func (e *Engine) ConfigureMultiObjective(objs []ObjectiveSpec, constraints []ConstraintSpec) error {

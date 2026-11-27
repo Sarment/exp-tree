@@ -2,10 +2,12 @@ package eval
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -214,5 +216,130 @@ func TestEvalNoStalePythonBytecodeCache(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, "__pycache__")); !os.IsNotExist(err) {
 		t.Fatalf("expected no __pycache__ directory created during eval, got err=%v", err)
+	}
+}
+
+func TestSerialEvalQueueLock(t *testing.T) {
+	ctx := context.Background()
+	repo := t.TempDir()
+
+	// Initialize git repo for worktrees
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@exptree.local"},
+		{"config", "user.name", "ExpTree Test"},
+	} {
+		c := exec.Command("git", args...)
+		c.Dir = repo
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v (%s)", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("# test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"add", "README.md"},
+		{"commit", "-m", "init"},
+	} {
+		c := exec.Command("git", args...)
+		c.Dir = repo
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v (%s)", args, err, out)
+		}
+	}
+	headSHA, err := gitops.HeadSHA(ctx, repo)
+	if err != nil {
+		t.Fatalf("head sha: %v", err)
+	}
+
+	eng, err := tree.OpenEngine(gitops.DefaultStatePath(repo))
+	if err != nil {
+		t.Fatalf("open engine: %v", err)
+	}
+	base := 100.0
+	if _, err := eng.InitRoot("Serial lock test", "ops_per_sec", true, headSHA, &base); err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.SetSerialEval(true); err != nil {
+		t.Fatalf("set serial eval: %v", err)
+	}
+
+	n1, err := eng.Branch(tree.BranchInput{ParentID: "node-0", AgentID: "w1", Hypothesis: "Serial branch 1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt1, err := gitops.CreateWorktree(ctx, repo, n1.ID, headSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = eng.AttachWorker(n1.ID, os.Getpid(), wt1)
+
+	n2, err := eng.Branch(tree.BranchInput{ParentID: "node-0", AgentID: "w2", Hypothesis: "Serial branch 2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt2, err := gitops.CreateWorktree(ctx, repo, n2.ID, headSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = eng.AttachWorker(n2.ID, os.Getpid(), wt2)
+
+	orderFile := filepath.Join(repo, "order.log")
+	mkCmd := func(id string, score int) string {
+		return fmt.Sprintf("printf 'START %s\\n' >> %q; sleep 0.25; printf 'END %s\\n' >> %q; echo 'OPS_PER_SEC=%d'",
+			id, orderFile, id, orderFile, score)
+	}
+
+	runner := NewRunner(eng, repo)
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	results := make([]*RunResult, 2)
+
+	for i, tc := range []struct {
+		id    string
+		score int
+	}{
+		{n1.ID, 150},
+		{n2.ID, 180},
+	} {
+		wg.Add(1)
+		go func(idx int, nodeID string, sc int) {
+			defer wg.Done()
+			res, rErr := runner.Run(ctx, RunInput{
+				NodeID:       nodeID,
+				Command:      mkCmd(nodeID, sc),
+				Timeout:      5 * time.Second,
+				AutoRollback: false,
+			})
+			errs[idx] = rErr
+			results[idx] = res
+		}(i, tc.id, tc.score)
+	}
+	wg.Wait()
+
+	for i, rErr := range errs {
+		if rErr != nil {
+			t.Fatalf("goroutine %d run failed: %v", i, rErr)
+		}
+		if results[i].Outcome != string(tree.NodeValidated) {
+			t.Fatalf("goroutine %d expected VALIDATED, got %+v", i, results[i])
+		}
+	}
+
+	rawOrder, err := os.ReadFile(orderFile)
+	if err != nil {
+		t.Fatalf("read order log: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(rawOrder)), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 order lines, got %q", string(rawOrder))
+	}
+	// Must not interleave: lines[0] START X -> lines[1] END X, then START Y -> END Y
+	firstID := strings.TrimPrefix(lines[0], "START ")
+	secondID := strings.TrimPrefix(lines[2], "START ")
+	if !strings.HasPrefix(lines[0], "START ") || lines[1] != "END "+firstID ||
+		!strings.HasPrefix(lines[2], "START ") || lines[3] != "END "+secondID || firstID == secondID {
+		t.Fatalf("eval lock failed to serialize execution, order log:\n%s", string(rawOrder))
 	}
 }

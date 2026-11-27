@@ -1,0 +1,11 @@
+{
+  "exptree-compaction-reload": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "PATH=\"$HOME/.local/bin:$PATH\" exptree hook pre-invocation",
+        "timeout": 5
+      }
+    ]
+  }
+}

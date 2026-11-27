@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/sarment/exptree/internal/gitops"
@@ -26,6 +28,7 @@ type RunInput struct {
 	MetricRegex  string        `json:"metric_regex,omitempty"`
 	Timeout      time.Duration `json:"timeout,omitempty"` // <= 0 means unlimited (no outer wall-clock timeout)
 	AutoRollback bool          `json:"auto_rollback"`
+	SerialEval   bool          `json:"serial_eval,omitempty"` // Serialize heavy evals via repo-level eval.lock
 }
 
 type RecordInput struct {
@@ -168,6 +171,17 @@ func (r *Runner) Run(parentCtx context.Context, in RunInput) (*RunResult, error)
 		_, _ = r.engine.RecordStep(active.ID, "Smoke sanity gate passed", true)
 	}
 
+	useSerial := in.SerialEval || r.engine.Snapshot().SerialEval
+	unlockSlot := func() {}
+	if useSerial {
+		var slotErr error
+		unlockSlot, slotErr = r.acquireEvalSlot(parentCtx, active.ID)
+		if slotErr != nil {
+			return nil, slotErr
+		}
+		defer unlockSlot()
+	}
+
 	ctx := parentCtx
 	var cancel context.CancelFunc
 	if in.Timeout > 0 {
@@ -193,6 +207,7 @@ func (r *Runner) Run(parentCtx context.Context, in RunInput) (*RunResult, error)
 
 	runErr := cmd.Run()
 	pw.Flush()
+	unlockSlot()
 	durationMs := time.Since(start).Milliseconds()
 	combinedOut := outBuf.String()
 
@@ -361,4 +376,67 @@ func evalCommandEnv() []string {
 		out = append(out, "PYTHONDONTWRITEBYTECODE=1")
 	}
 	return out
+}
+
+func (r *Runner) resolveEvalLockPath() string {
+	if sd := r.engine.StateDir(); sd != "" {
+		return filepath.Join(sd, "eval.lock")
+	}
+	if r.repoDir != "" {
+		return filepath.Join(r.repoDir, ".git", "exp-tree", "eval.lock")
+	}
+	return ""
+}
+
+func (r *Runner) acquireEvalSlot(ctx context.Context, nodeID string) (func(), error) {
+	lockPath := r.resolveEvalLockPath()
+	if lockPath == "" {
+		return func() {}, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+
+	var once sync.Once
+	unlock := func() {
+		once.Do(func() {
+			_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+			_ = f.Close()
+		})
+	}
+
+	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err == nil {
+		return unlock, nil
+	}
+	if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+		_ = f.Close()
+		return nil, err
+	}
+
+	_, _ = r.engine.RecordProgress(nodeID, "排队等待评测槽位…")
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			_ = f.Close()
+			return nil, ctx.Err()
+		case <-ticker.C:
+			err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+			if err == nil {
+				_, _ = r.engine.RecordProgress(nodeID, "已获得评测槽位，开始评测…")
+				return unlock, nil
+			}
+			if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+				_ = f.Close()
+				return nil, err
+			}
+		}
+	}
 }
