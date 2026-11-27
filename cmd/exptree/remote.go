@@ -18,7 +18,7 @@ import (
 	"github.com/sarment/exptree/internal/tree"
 )
 
-const cliVersion = "0.5.2"
+const cliVersion = "0.5.3"
 
 func runVersion() {
 	fmt.Printf("exptree %s (%s/%s)\n", cliVersion, runtime.GOOS, runtime.GOARCH)

@@ -427,6 +427,39 @@ func (e *Engine) SetPhase(nodeID, phase string) error {
 	return e.saveLocked()
 }
 
+// ReopenForEval revives a PRUNED node back into active EXPLORING/SYNTHESIZING state for in-place re-evaluation.
+func (e *Engine) ReopenForEval(nodeID, phase string) (*ExpNode, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	unlock := e.acquireFileLockReload()
+	defer unlock()
+
+	if nodeID == "" {
+		nodeID = e.state.ActiveNodeID
+	}
+	n, ok := e.state.Nodes[nodeID]
+	if !ok {
+		return nil, ErrNodeNotFound
+	}
+	if n.Status == NodePruned {
+		if n.IsConvergenceNode() {
+			n.Status = NodeSynthesizing
+		} else {
+			n.Status = NodeExploring
+		}
+		n.PruneDigest = ""
+		e.state.ActiveNodeID = n.ID
+	}
+	if n.Status == NodeExploring && phase != "" {
+		n.Phase = phase
+	}
+	n.UpdatedAt = time.Now()
+	if err := e.saveLocked(); err != nil {
+		return nil, err
+	}
+	return copyNode(n), nil
+}
+
 // RecordProgress updates a node's live progress note in-place so multi-hour runs
 // stream status without bloating state.json with hundreds of step entries.
 func (e *Engine) RecordProgress(nodeID, msg string) (*ExpNode, error) {

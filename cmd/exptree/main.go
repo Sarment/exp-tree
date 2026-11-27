@@ -453,6 +453,7 @@ func launchDetachedEval(eng *tree.Engine, targetRepo, stateOverride, nodeID, com
 	if _, err := eng.GetNode(nodeID); err != nil {
 		return err
 	}
+	_, _ = eng.ReopenForEval(nodeID, tree.PhasePreparing)
 	absRepo := targetRepo
 	if p, err := filepath.Abs(targetRepo); err == nil {
 		absRepo = p

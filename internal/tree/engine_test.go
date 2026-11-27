@@ -205,3 +205,41 @@ func TestNodeActivePhaseLifecycle(t *testing.T) {
 		t.Fatalf("expected cleared phase on pruned node, got %q", pruned.Phase)
 	}
 }
+
+func TestReopenForEvalRevivesPrunedNode(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	eng, err := OpenEngine(stateFile)
+	if err != nil {
+		t.Fatalf("open engine: %v", err)
+	}
+	base := 100.0
+	if _, err := eng.InitRoot("Reopen test", "score", true, "sha-root", &base); err != nil {
+		t.Fatal(err)
+	}
+
+	n1, err := eng.Branch(BranchInput{ParentID: "node-0", AgentID: "w1", Hypothesis: "Quoting error candidate"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := eng.Prune(n1.ID, "sh: 1: Syntax error", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	revived, err := eng.ReopenForEval(n1.ID, PhasePreparing)
+	if err != nil {
+		t.Fatalf("ReopenForEval failed: %v", err)
+	}
+	if revived.Status != NodeExploring || revived.Phase != PhasePreparing || revived.PruneDigest != "" {
+		t.Fatalf("expected revived EXPLORING/preparing with empty PruneDigest, got %+v", revived)
+	}
+	if err := eng.AttachWorker(n1.ID, 4242, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.SetPhase(n1.ID, PhaseQueued); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := eng.GetNode(n1.ID)
+	if got.WorkerPID != 4242 || got.Phase != PhaseQueued || eng.Snapshot().ActiveNodeID != n1.ID {
+		t.Fatalf("unexpected node state after attach/queue: %+v active=%s", got, eng.Snapshot().ActiveNodeID)
+	}
+}

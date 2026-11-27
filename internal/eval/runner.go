@@ -145,6 +145,11 @@ func (r *Runner) Run(parentCtx context.Context, in RunInput) (*RunResult, error)
 	if err != nil {
 		return nil, err
 	}
+	if active.Status == tree.NodePruned {
+		if reopened, rErr := r.engine.ReopenForEval(active.ID, tree.PhasePreparing); rErr == nil && reopened != nil {
+			active = reopened
+		}
+	}
 
 	targetDir := r.resolveTargetDir(in.WorkDir, active.WorktreePath)
 

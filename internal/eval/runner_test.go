@@ -346,3 +346,51 @@ func TestSerialEvalQueueLock(t *testing.T) {
 		t.Fatalf("eval lock failed to serialize execution, order log:\n%s", string(rawOrder))
 	}
 }
+
+func TestReEvalRevivesPrunedNodeInPlace(t *testing.T) {
+	ctx := context.Background()
+	repo := t.TempDir()
+	eng, err := tree.OpenEngine(gitops.DefaultStatePath(repo))
+	if err != nil {
+		t.Fatalf("open engine: %v", err)
+	}
+	base := 100.0
+	if _, err := eng.InitRoot("In-place revive test", "ops_per_sec", true, "", &base); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(eng, repo)
+
+	n1, err := eng.Branch(tree.BranchInput{ParentID: "node-0", AgentID: "w1", Hypothesis: "Good code bad eval cmd"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Simulate shell quoting error pruning n1
+	resFail, err := runner.Run(ctx, RunInput{
+		NodeID:       n1.ID,
+		Command:      `echo 'unterminated`,
+		Timeout:      5 * time.Second,
+		AutoRollback: false,
+	})
+	if err != nil {
+		t.Fatalf("first run errored: %v", err)
+	}
+	if resFail.Outcome != string(tree.NodePruned) || resFail.Node.PruneDigest == "" {
+		t.Fatalf("expected PRUNED with digest, got %+v", resFail)
+	}
+
+	// 2. Re-run eval in-place on the same n1 -> revives to VALIDATED
+	resOK, err := runner.Run(ctx, RunInput{
+		NodeID:       n1.ID,
+		Command:      "echo 'OPS_PER_SEC=250.0'",
+		Timeout:      5 * time.Second,
+		AutoRollback: false,
+	})
+	if err != nil {
+		t.Fatalf("revive run failed: %v", err)
+	}
+	if resOK.Outcome != string(tree.NodeValidated) || resOK.Score == nil || *resOK.Score != 250.0 ||
+		resOK.Node.PruneDigest != "" || resOK.Node.Phase != "" || eng.Snapshot().BestNodeID != n1.ID {
+		t.Fatalf("expected in-place revival to VALIDATED (250.0), got %+v best=%s", resOK.Node, eng.Snapshot().BestNodeID)
+	}
+}
