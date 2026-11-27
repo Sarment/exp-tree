@@ -151,15 +151,16 @@ func (e *Engine) InitRoot(goal, metricName string, higherIsBetter bool, gitCommi
 }
 
 type BranchInput struct {
-	ParentID     string   `json:"parent_id,omitempty"`
-	ParentIDs    []string `json:"parent_ids,omitempty"` // 支持 2..N 个父节点合流为一个 SYNTHESIZING 节点
-	AgentID      string   `json:"agent_id"`
-	Hypothesis   string   `json:"hypothesis"`
-	GitBranch    string   `json:"git_branch,omitempty"`
-	GitCommit    string   `json:"git_commit,omitempty"`
-	WorktreePath string   `json:"worktree_path,omitempty"`
-	WorkerPID    int      `json:"worker_pid,omitempty"`
-	TotalSteps   int      `json:"total_steps,omitempty"`
+	ParentID       string   `json:"parent_id,omitempty"`
+	ParentIDs      []string `json:"parent_ids,omitempty"` // 支持 2..N 个父节点合流为一个 SYNTHESIZING 节点
+	AgentID        string   `json:"agent_id"`
+	Hypothesis     string   `json:"hypothesis"`
+	RevisitsNodeID string   `json:"revisits_node_id,omitempty"`
+	GitBranch      string   `json:"git_branch,omitempty"`
+	GitCommit      string   `json:"git_commit,omitempty"`
+	WorktreePath   string   `json:"worktree_path,omitempty"`
+	WorkerPID      int      `json:"worker_pid,omitempty"`
+	TotalSteps     int      `json:"total_steps,omitempty"`
 }
 
 func (e *Engine) SetEvalCommand(evalCmd string) error {
@@ -270,20 +271,21 @@ func (e *Engine) Branch(in BranchInput) (*ExpNode, error) {
 	}
 
 	child := &ExpNode{
-		ID:           id,
-		ParentID:     primaryParent.ID,
-		ParentIDs:    parents,
-		AgentID:      in.AgentID,
-		WorkerPID:    in.WorkerPID,
-		WorktreePath: in.WorktreePath,
-		Hypothesis:   in.Hypothesis,
-		GitBranch:    in.GitBranch,
-		GitCommit:    commit,
-		Status:       initialStatus,
-		TotalSteps:   in.TotalSteps,
-		Visits:       1,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:             id,
+		ParentID:       primaryParent.ID,
+		ParentIDs:      parents,
+		AgentID:        in.AgentID,
+		WorkerPID:      in.WorkerPID,
+		WorktreePath:   in.WorktreePath,
+		Hypothesis:     in.Hypothesis,
+		RevisitsNodeID: in.RevisitsNodeID,
+		GitBranch:      in.GitBranch,
+		GitCommit:      commit,
+		Status:         initialStatus,
+		TotalSteps:     in.TotalSteps,
+		Visits:         1,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 
 	// 主父节点挂载树形主边（防止 ASCII 树重复打印同一子树），所有父节点均获得访问计数回传
@@ -556,6 +558,9 @@ func (e *Engine) CompileContextBrief(nodeID string) string {
 	fmt.Fprintf(&b, "## [ExpTree 探索导航] 目标: %s (指标: %s)\n", e.state.Goal, e.state.MetricName)
 	fmt.Fprintf(&b, "- 当前所在节点: `%s` (%s) | 状态: `%s` | 节点进度: %d%%\n",
 		curr.ID, curr.Hypothesis, curr.Status, curr.ProgressPercent())
+	if curr.RevisitsNodeID != "" {
+		fmt.Fprintf(&b, "- ↻ 重审历史节点: 重审 %s（因新进展推翻了早先失败前提）\n", curr.RevisitsNodeID)
+	}
 	if curr.IsConvergenceNode() {
 		fmt.Fprintf(&b, "- 合流父节点集合: `%s`\n", strings.Join(curr.ParentIDs, " + "))
 	}
@@ -577,12 +582,21 @@ func (e *Engine) CompileContextBrief(nodeID string) string {
 		fmt.Fprintf(&b, "- 全局最优记录: `%s` (%s) -> %s = %.4f\n",
 			best.ID, best.Hypothesis, e.state.MetricName, *best.PrimaryScore)
 	}
+	if ratio, _, ok := ComputeConfidence(e.state); ok {
+		fmt.Fprintf(&b, "- 📊 统计置信度: %s\n", formatConfidenceTier(ratio))
+	}
 	if len(e.state.Constraints) > 0 {
 		var cs []string
 		for _, c := range e.state.Constraints {
 			cs = append(cs, fmt.Sprintf("%s%s%g", c.Metric, c.Op, c.Threshold))
 		}
 		fmt.Fprintf(&b, "- 🛡️ 科学硬约束门禁 (一票否决): `%s`\n", strings.Join(cs, ", "))
+	}
+	if streak := TrailingConsecutivePrunes(e.state); streak >= 3 {
+		fmt.Fprintf(&b, "- ⚠️ [防空转提醒] 最近已连续 %d 次分支被剪枝/失败，请先停下来检视约束、退回更早领先节点或通过 `exptree converge` 切换思路。\n", streak)
+	}
+	if curr.Status.IsSuccess() && curr.ID != e.state.RootID && HasPrunedNode(e.state) {
+		fmt.Fprintf(&b, "- 💡 [已剪枝分支前提是否改变] 本次突破后，请顺带检视此前失败分支的淘汰假设是否已被推翻；若成立可用 `exptree branch -revisits <node-id>` 标记重审。\n")
 	}
 
 	inspectParent := curr
@@ -672,6 +686,9 @@ func (e *Engine) renderNodeLocked(b *strings.Builder, n *ExpNode, prefix string,
 	}
 	if n.ID == e.state.BestNodeID && n.PrimaryScore != nil {
 		badge += "[BEST]"
+	}
+	if n.RevisitsNodeID != "" {
+		badge += fmt.Sprintf("[↻ %s]", n.RevisitsNodeID)
 	}
 	pointer := ""
 	if n.ID == e.state.ActiveNodeID {

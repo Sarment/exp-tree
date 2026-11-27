@@ -92,7 +92,7 @@ Follow the real scientific cadence — enter at whichever stage matches what is 
 - **Finalize baseline + multi-objective specs & hard constraints + auto-eval `node-0`**:
   `$BIN up -repo <REPO> -goal "<与用户语言一致的简洁目标描述>" -objectives "err:min,throughput:max" -constraints "leak<=1e-6" -eval-cmd "<cmd>" -serve=false` *(supports `-timeout 0`, `-detach`, or single-metric `-metric <name> -minimize=true|false`)*
 - **Create hypothesis branch** (use `-worktree` for parallel workers):
-  `$BIN branch -repo <REPO> -parent node-0 -agent exp-worker-1 -hypothesis "<与用户语言一致、12-28字具体机制>" -worktree` *(omitting `-parent` defaults to active node; branching from a `PRUNED` node is supported for retries)*
+  `$BIN branch -repo <REPO> -parent node-0 -agent exp-worker-1 -hypothesis "<与用户语言一致、12-28字具体机制>" -worktree` *(omitting `-parent` defaults to active node; branching from a `PRUNED` node is supported for retries; add `-revisits <pruned-id>` when an assumption changed)*
 - **Evaluate a branch (sync or detached long-running job)**:
   `$BIN eval -repo <REPO> -node <node-id> -cmd "<cmd>" -rollback=true` *(default `-timeout 0` unlimited; add `-detach` for multi-hour background jobs; optional `-regex`, `-timeout 3h`)*
 - **Stream live progress or record external benchmark results**:
@@ -100,6 +100,8 @@ Follow the real scientific cadence — enter at whichever stage matches what is 
   `$BIN record -repo <REPO> -node <node-id> -from-file <log>` *(or `-metrics "m1=42,c1=0"` to promote/prune using external Slurm/SSH results)*
 - **Converge 2+ complementary branches**:
   `$BIN converge -repo <REPO> -parents node-2,node-3 -cmd "<cmd>"` *(or `-a node-2 -b node-3`; optional `-supervisor`, `-supervisor-cmd`, `-timeout 90s`)*
+- **Finalize a reviewable winner branch & PR summary**:
+  `$BIN finalize -repo <REPO>` *(optional `-node <node-id>`, `-branch <name>`, `-checkout`)*
 - **Inspect tree, sidebar focus & compiled brief**:
   `$BIN view -repo <REPO>` | `$BIN focus` *(optional `-conv <id>`)*
   `$BIN brief -repo <REPO>` *(omitting `-repo` auto-resolves the bound repo via `ANTIGRAVITY_CONVERSATION_ID`)*

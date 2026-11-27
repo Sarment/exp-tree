@@ -78,6 +78,27 @@ func DiffCommits(ctx context.Context, repoDir, fromRef, toRef string) (string, e
 	return runGit(ctx, repoDir, "diff", "--unified=3", fromRef, toRef)
 }
 
+// DiffStatCommits returns `git diff --stat` between two commits for PR/finalize summaries.
+func DiffStatCommits(ctx context.Context, repoDir, fromRef, toRef string) (string, error) {
+	if fromRef == "" || toRef == "" {
+		return "", nil
+	}
+	return runGit(ctx, repoDir, "diff", "--stat", fromRef, toRef)
+}
+
+// CreateBranchAt creates or updates a branch pointing at targetCommit without changing HEAD unless checkout is true.
+func CreateBranchAt(ctx context.Context, repoDir, branchName, targetCommit string, checkout bool) error {
+	if branchName == "" || targetCommit == "" {
+		return fmt.Errorf("branchName and targetCommit are required")
+	}
+	if checkout {
+		_, err := runGit(ctx, repoDir, "checkout", "-B", branchName, targetCommit)
+		return err
+	}
+	_, err := runGit(ctx, repoDir, "branch", "-f", branchName, targetCommit)
+	return err
+}
+
 // CreateWorktree 为多 Agent 并行探索创建物理隔离的 Git Worktree（存放在 .git/exp-tree/worktrees/<nodeID>）
 func CreateWorktree(ctx context.Context, repoDir, nodeID, baseCommit string) (string, error) {
 	wtPath := filepath.Join(repoDir, ".git", "exp-tree", "worktrees", nodeID)

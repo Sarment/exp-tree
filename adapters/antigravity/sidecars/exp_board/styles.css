@@ -718,7 +718,8 @@ tr.line-del .wd { background: color-mix(in srgb, var(--diff-del-fg) 24%, transpa
 .card-note { font-size: 11px; color: var(--et-fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .progress-bar { height: 5px; margin: 2px 0 10px; }
 .kv-row { display: flex; align-items: baseline; gap: 10px; font-size: 12px; margin-top: 6px; min-width: 0; }
-.kv-key { flex: none; width: 28px; color: var(--et-fg-muted); font-size: 11px; }
+.kv-key { flex: none; min-width: 28px; white-space: nowrap; color: var(--et-fg-muted); font-size: 11px; }
+:root[lang="en"] .kv-key { min-width: 48px; }
 .kv-val { min-width: 0; color: var(--et-fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kv-val.mono { font-family: var(--et-mono); font-size: 11px; }
 .kv-sep { color: var(--et-fg-faint); margin: 0 6px; }
@@ -733,6 +734,21 @@ tr.line-del .wd { background: color-mix(in srgb, var(--diff-del-fg) 24%, transpa
 .step-dot.muted { background: var(--et-fg-faint); }
 .step-msg { font-size: 12px; }
 .empty-inline { color: var(--et-fg-muted); font-size: 12px; }
+
+.revisit-pill {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-family: var(--et-mono); font-size: 10.5px; font-weight: 500;
+  height: 18px; padding: 0 6px; border-radius: 999px;
+  background: var(--et-fill); color: var(--et-fg-2);
+  border: 1px solid var(--et-line);
+}
+.conf-pill {
+  font-family: var(--et-mono); font-size: 10.5px; font-weight: 600;
+  padding: 1px 6px; border-radius: 4px;
+  background: var(--et-pass-bg); color: var(--et-pass);
+}
+.conf-pill.mid { background: var(--et-run-bg); color: var(--et-run); }
+.conf-pill.low { background: var(--et-fill); color: var(--et-fg-muted); }
 
 /* Chart text */
 .ax-tick { font-size: 10.5px; font-family: var(--et-mono); fill: var(--et-fg-faint); }

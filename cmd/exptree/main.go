@@ -56,6 +56,8 @@ func main() {
 		runView(os.Args[2:])
 	case "brief":
 		runBrief(os.Args[2:])
+	case "finalize":
+		runFinalize(os.Args[2:])
 	case "mcp":
 		runMCP(os.Args[2:])
 	case "bind":
@@ -306,6 +308,7 @@ func runBranch(args []string) {
 	parentID := fs.String("parent", "", "Parent node ID (defaults to active node)")
 	agentID := fs.String("agent", "cli-agent", "Agent identifier")
 	hypothesis := fs.String("hypothesis", "", "Hypothesis to test on this branch")
+	revisits := fs.String("revisits", "", "Optional earlier PRUNED node ID revisited after an assumption changed")
 	worktree := fs.Bool("worktree", false, "Create isolated .git/exp-tree/worktrees/<node-id> for parallel agents")
 	steps := fs.Int("steps", 2, "Expected verification steps")
 	_ = fs.Parse(args)
@@ -326,11 +329,12 @@ func runBranch(args []string) {
 		log.Fatalf("get parent: %v", err)
 	}
 	node, err := eng.Branch(tree.BranchInput{
-		ParentID:   parent.ID,
-		AgentID:    *agentID,
-		Hypothesis: *hypothesis,
-		GitBranch:  fmt.Sprintf("exp/temp-%d", time.Now().UnixNano()%10000),
-		TotalSteps: *steps,
+		ParentID:       parent.ID,
+		AgentID:        *agentID,
+		Hypothesis:     *hypothesis,
+		RevisitsNodeID: strings.TrimSpace(*revisits),
+		GitBranch:      fmt.Sprintf("exp/temp-%d", time.Now().UnixNano()%10000),
+		TotalSteps:     *steps,
 	})
 	if err != nil {
 		log.Fatalf("branch failed: %v", err)
@@ -798,6 +802,86 @@ func shortSHA(sha string) string {
 	return sha
 }
 
+func runFinalize(args []string) {
+	fs := flag.NewFlagSet("finalize", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Target repository directory")
+	conv := fs.String("conv", "", "Antigravity conversation ID (defaults to ANTIGRAVITY_CONVERSATION_ID)")
+	statePath := fs.String("state", "", "Optional custom state file path")
+	nodeID := fs.String("node", "", "Target winning node ID (defaults to BestNodeID, else ActiveNodeID)")
+	branchName := fs.String("branch", "", "Branch name to create/update (defaults to exptree/winner-<node-id>)")
+	checkout := fs.Bool("checkout", false, "Also checkout the finalized branch in repo")
+	_ = fs.Parse(args)
+
+	if maybeProxyRemote("finalize", args, *conv, isFlagSet(fs, "repo")) {
+		return
+	}
+	targetRepo := resolveRepoForCLI(*repo, *conv, isFlagSet(fs, "repo"))
+	eng, err := tree.OpenEngine(resolveStatePath(targetRepo, *statePath))
+	if err != nil {
+		log.Fatalf("open engine: %v", err)
+	}
+	snap := eng.Snapshot()
+
+	targetID := strings.TrimSpace(*nodeID)
+	if targetID == "" {
+		targetID = snap.BestNodeID
+	}
+	if targetID == "" {
+		targetID = snap.ActiveNodeID
+	}
+	if targetID == "" {
+		targetID = snap.RootID
+	}
+	winner, err := eng.GetNode(targetID)
+	if err != nil {
+		log.Fatalf("get winner node %q: %v", targetID, err)
+	}
+	if winner.GitCommit == "" {
+		log.Fatalf("node %s has no recorded git commit yet", winner.ID)
+	}
+
+	outBranch := strings.TrimSpace(*branchName)
+	if outBranch == "" {
+		outBranch = "exptree/winner-" + winner.ID
+	}
+
+	root := snap.Nodes[snap.RootID]
+	ctx := context.Background()
+	if gitops.IsGitRepo(ctx, targetRepo) {
+		if err := gitops.CreateBranchAt(ctx, targetRepo, outBranch, winner.GitCommit, *checkout); err != nil {
+			log.Fatalf("finalize branch %s failed: %v", outBranch, err)
+		}
+	}
+
+	fmt.Printf("## [ExpTree Finalize] %s\n", snap.Goal)
+	fmt.Printf("- Winner Node: `%s` (%s | %s)\n", winner.ID, winner.Hypothesis, winner.Status)
+	fmt.Printf("- Branch: `%s` @ `%s`%s\n", outBranch, shortSHA(winner.GitCommit), map[bool]string{true: " (checked out)"}[*checkout])
+	if path := tree.LineagePath(snap, winner.ID); len(path) > 0 {
+		ids := make([]string, len(path))
+		for i, n := range path {
+			ids[i] = n.ID
+		}
+		fmt.Printf("- Lineage: %s\n", strings.Join(ids, " -> "))
+	}
+	if len(snap.Objectives) >= 2 && len(winner.Metrics) > 0 {
+		fmt.Printf("- Metrics: %s\n", tree.FormatObjectiveSummary(winner.Metrics, snap.Objectives))
+	} else if winner.PrimaryScore != nil {
+		baseStr := ""
+		if root != nil && root.PrimaryScore != nil {
+			baseStr = fmt.Sprintf(" (baseline=%.4f)", *root.PrimaryScore)
+		}
+		fmt.Printf("- Primary Metric: %s=%.4f%s\n", snap.MetricName, *winner.PrimaryScore, baseStr)
+	}
+	if ratio, mad, ok := tree.ComputeConfidence(snap); ok {
+		fmt.Printf("- Confidence: %.1f× MAD (mad=%.4g)\n", ratio, mad)
+	}
+	if root != nil && root.GitCommit != "" && gitops.IsGitRepo(ctx, targetRepo) {
+		if stat, err := gitops.DiffStatCommits(ctx, targetRepo, root.GitCommit, winner.GitCommit); err == nil && stat != "" {
+			fmt.Printf("- Diff vs Baseline (%s..%s):\n%s\n", shortSHA(root.GitCommit), shortSHA(winner.GitCommit), stat)
+		}
+	}
+}
+
 func printUsage() {
-	fmt.Println("Usage: exptree <up|init|branch|eval|record|step|crossover|resume|recommend|view|brief|bind|focus|deploy|setup|version|mcp|serve> [flags]")
+	fmt.Println("Usage: exptree <up|init|branch|eval|record|step|crossover|finalize|resume|recommend|view|brief|bind|focus|deploy|setup|version|mcp|serve> [flags]")
 }

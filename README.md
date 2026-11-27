@@ -1,175 +1,123 @@
 # ExpTree (`exptree`)
 
-**A Git-native experiment orchestration harness for long-running algorithmic and scientific research.**
+English | [简体中文](README.zh-CN.md)
 
-ExpTree turns iterative algorithm and systems optimization into an auditable, crash-recoverable Git DAG—built to run across **Codex**, **OpenCode**, **Pi**, **DeepSeek Harness (`dsh`)**, and **Antigravity IDE** (`/exptree`). It ships as a **zero-dependency Go static binary** (`go.mod` has 0 external packages) exposing a unified **CLI**, **stdio MCP server**, **embedded Web UI**, and **IDE Sidecar plugin**.
+**A Git-native experiment workspace and visual DAG console for coding agents running iterative algorithmic and ML optimization.**
 
-Instead of burning context windows on linear trial-and-error inside a dirty working directory, ExpTree isolates every hypothesis in a physical `git worktree`, commits failed experiments before rolling back so agents can inspect diffs and retry, gates candidates with hard domain invariants and multi-objective trade-offs, and supports multi-hour detached runs on local machines or remote SSH/GPU servers.
+Works with **Codex**, **OpenCode**, **Pi**, **DeepSeek Harness (`dsh`)**, and **Antigravity IDE** (`/exptree`) as a single static Go binary exposing a **CLI**, **stdio MCP server**, **embedded Web UI**, and **IDE Sidecar plugin** (bilingual UI via `?lang=en` / `?lang=zh`).
 
----
-
-## Why ExpTree?
-
-| Approach | Branching & Isolation | Failed Experiments | Long-Term Context | Multi-Hour / Cluster Evals | Remote Compute |
-| --- | --- | --- | --- | --- | --- |
-| **Linear Coding Agents** | Single dirty working tree; overwrites history | Overwritten or discarded; easy to repeat mistakes | Logs & diffs accumulate until context rots | Blocked on short shell timeouts | Manual SSH loops or copying files |
-| **Single-Chain AutoResearch Scripts** | Greedy hill-climbing; one "best" path only | Dropped on failure; cannot combine two strengths | Relies on prompt memory or ad-hoc markdown | Tied to synchronous single-script loop | Single-machine focused |
-| **Experiment Trackers (MLflow / W&B)** | Post-hoc metric logging; no code sandboxing | Logs numbers, not isolated retryable worktrees | Built for humans, not live agent steering | External job logging only | Centralized server required |
-| **Mesh Multi-Agent Frameworks** | Worker-to-worker chatter causes drift & token bloat | Shared state frequently gets out of sync | Prompt-managed state causes ledger hallucinations | No OS-level PID tracking or orphan recovery | Custom RPC scaffolding needed |
-| **ExpTree (`exptree`)** | **Git DAG + isolated `git worktree` per node (`N`-way fork & `N-to-1` merge)** | **Committed onto `exp/<node-id>` before `reset --hard` for diff inspection & retry** | **Externalized `.git/exp-tree/state.json` + compressed `brief` & 3-part capsules** | **Unlimited `-timeout 0`, `Setsid` `-detach`, `PROGRESS:` streaming, `signal 0` recovery** | **Single static binary via `exptree deploy -ssh`; zero-config SSH proxy + offline cache** |
-
----
-
-## Architecture & Core Design Principles
-
-ExpTree cleanly separates **what the LLM decides** from **what deterministic code guarantees**:
-
-```mermaid
-flowchart TB
-  subgraph Brain["Probabilistic Brain (Hub-and-Spoke Orchestration)"]
-    PI["Lead Agent / PI (Reads compressed brief, plans branches & convergence)"]
-    Scout["exp-scout (Literature & prior-art check)"]
-    Worker["exp-worker (Isolated worktree edits, no worker-to-worker mesh)"]
-    Synth["exp-synthesizer (Semantic conflict resolution)"]
-    PI --> Scout
-    PI --> Worker
-    PI --> Synth
-  end
-
-  subgraph Adapters["Thin Adapters (Protocol & UI Only)"]
-    CLI["exptree CLI & transparent SSH proxy"]
-    MCP["exptree mcp (stdio JSON-RPC 2.0)"]
-    Web["exptree serve (Embedded Web UI)"]
-    Sidecar["Antigravity Sidecar (Live DAG & UI focus)"]
-  end
-
-  subgraph Kernel["Deterministic Go Kernel (Zero External Dependencies)"]
-    State["state.json + syscall.Flock + atomic rename"]
-    Git["git worktree sandboxes + commit-before-rollback"]
-    Eval["Objective grader + hard constraints + detached runner"]
-    Remote["SSH ControlMaster proxy + static Linux binary deploy"]
-  end
-
-  Brain --> Adapters
-  Adapters --> Kernel
-```
-
-### Four Engineering Principles
-
-1. **Git + DAG as the Single Source of Truth**:
-   Experiment state lives in `.git/exp-tree/state.json`, never in the tracked working tree—so `git status` stays clean and `git reset --hard` never wipes experiment history. Parallel writes are protected by OS file locks (`syscall.Flock`) and atomic temp-file renames. Every broken or regressed experiment is committed to `exp/<node-id>` **before** restoring a clean parent workspace, turning failed runs into inspectable diff history rather than lost work.
-2. **Deterministic Kernel vs. Probabilistic Brain**:
-   LLMs are good at reading literature, proposing hypotheses, and writing code, and unreliable at bookkeeping, concurrency, and grading. ExpTree moves directory isolation, cross-process locking, objective metric parsing, hard-constraint enforcement, multi-objective dominance checks, and PID lifecycle tracking into deterministic Go code. Workers never chat in a mesh; they execute one hypothesis in isolation and report back to the coordinator.
-3. **Externalized Memory Against Context Rot**:
-   Because full state stays on disk, conversations can be restarted or truncated without losing progress. The coordinator reads high-density tree summaries (`exptree brief`), drills into single nodes only when debugging (`exptree view`), and dispatches `exp-worker` subagents with focused 3-part capsules (goal + parent metrics + single assigned hypothesis).
-4. **Zero-Dependency Static Go Kernel for Compute Locality**:
-   Scientific solvers, compilers, and multi-GB datasets usually live on remote Linux/GPU servers where Python/conda environments break or lack internet access. Compiling the kernel with `CGO_ENABLED=0` produces a single ~8 MB static binary with zero third-party Go dependencies ([`go.mod`](go.mod)), cross-compiled for Linux `amd64`/`arm64` so you can deploy straight to a remote host and keep compute next to the data.
-
----
-
-## Visual Console
-
-Both the embedded standalone HTTP server (`exptree serve`) and the Antigravity Sidecar share the exact same interface across a 12-node Kepler orbital integration run: a structured list & lineage rail, an interactive left-to-right DAG canvas, a balanced multi-objective trade-off overview, and GitHub-style diffs that preserve failed runs.
+> *"Optimize our multi-turn GRPO agent trainer under `/data/exp/agentic-rl` on `ssh gpu-a100`: survey recent rollout/clipping recipes first, then explore parallel candidates while keeping KL divergence ≤ 0.08 and peak VRAM ≤ 76 GB."*
 
 | List & Lineage Rail (12 Nodes) | Left-to-Right DAG Canvas |
 | --- | --- |
-| ![ExpTree Rail View](docs/assets/tree-light.png) | ![ExpTree DAG Map](docs/assets/map-light.png) |
-| **Overview & Multi-Objective Trade-off Chart** | **Preserved Failure Diff & Constraint Gate** |
-| ![ExpTree Trade-off Chart](docs/assets/pareto-light.png) | ![ExpTree Failure Diff](docs/assets/diff-light.png) |
+| ![ExpTree Rail View](docs/assets/tree-en.png) | ![ExpTree DAG Map](docs/assets/map-en.png) |
+| **Overview, Confidence & Trade-off Chart** | **Preserved Failure Diff & Constraint Gate** |
+| ![ExpTree Trade-off Chart](docs/assets/pareto-en.png) | ![ExpTree Failure Diff](docs/assets/diff-en.png) |
 
-**Sample 12-node trajectory shown above (`kepler-orbit-sim`)**:
-- **Baseline & Constraint Veto (`node-0` → `node-1` / `node-7`, `node-4`)**: Fast non-symplectic / float32 shortcuts fail energy and angular-momentum bounds (`PRUNED`, commit preserved for diff inspection in **Failure Diff**); `node-4` forks directly from `node-1` to test an invariant-preserving retry.
-- **Parallel Depth Exploration (`node-2` → `node-5` → `node-8`, `node-3` → `node-6`)**: Speed-focused FSAL loop optimizations and high-order Yoshida integrators advance along separate trade-off directions.
-- **N-to-1 Semantic Convergence (`node-9`, `node-10`)**: Combines scalar register hoisting (`node-8`) with pre-multiplied 6th-order constants (`node-6`), pushing the leading trade-off frontier (`node-6` · `node-10` · `node-8`).
-- **Live Long-Running Eval (`node-11`)**: Streams `PROGRESS: 640/1000 ...` status updates in-place inside Overview (`动态`) without bloating `state.json`.
-
----
-
-## Built for Real Research Workflows
-
-- **Scientific Readiness Gate**: Does not rush to scaffold toy code on Turn 1 when you are still surveying papers or framing the problem. Checks three prerequisites first: agreed research direction, real codebase/baseline (`node-0`), and clear benchmark + runtime budget.
-- **Prior-Art Novelty Gate**: Separates reproducing known published baselines (`node-0`) from exploratory hypotheses by running read-only literature/codebase checks (`exp-scout`) before dispatching parallel workers.
-- **Multi-Hour & Cluster Evaluations**:
-  - Defaults to unlimited evaluation time (`-timeout 0`) so 3-hour solver or training benchmarks are never killed prematurely.
-  - Supports `-detach` to launch evaluations in a detached OS session (`Setsid`), streaming `PROGRESS:` lines to update node progress in-place without bloating `state.json`.
-  - Supports external Slurm/cluster workflows via `exptree step` (live status updates) and `exptree record` (backfill metrics from files or flags).
-  - Recovers cleanly across restarts with `exptree resume`, probing active worker PIDs via `signal 0`.
-- **N-to-1 Branch Convergence (`exptree converge`)**: Attempts a 3-way Git merge first; if competing optimizations modify the same hot path, aborts cleanly and compiles each parent's diff and hypothesis into a synthesis brief for `exp-synthesizer`.
-- **Per-Session Isolation**: Isolates active tree bindings per conversation/thread (`ANTIGRAVITY_CONVERSATION_ID`, `CODEX_THREAD_ID`, `OPENCODE_SESSION_ID`, `PI_SESSION_ID`, `DSH_SESSION_ID`, `ETREE_SESSION_ID`).
+**12-node Multi-Turn GRPO (`agentic-rl-grpo`) run shown above**:
+- **Constraint veto & preserved failure diff (`node-0` → `node-1` / `node-7`)**: Dropping KL regularization (`node-1`, `kl_div=0.148 > 0.08`) and disabling activation checkpointing at `G=16` (`node-7`, `81.4 GB > 76 GB`) are flagged `PRUNED` while keeping full diffs inspectable in **Changes**.
+- **Assumption-changed revisits (`node-4`, `node-10`)**: `node-4` retries `node-1` directly to restore KL stability, and converged branch `node-10` revisits (`↻`) `node-1`'s aggressive clipping insight safely inside a KL-regularized asymmetric trust region (`clip_high=0.28`).
+- **Parallel depth exploration (`node-2` → `node-5` → `node-8`, `node-3` → `node-6`)**: Prefix KV-cache sharing / varlen FlashAttn packing (`rollout_tok_s=4960`) and turn-level credit / zero-variance group filtering (`pass@1=0.618`) advance independently in separate worktrees.
+- **N-to-1 convergence & live long eval (`node-9`, `node-10`, `node-11`)**: `node-10` merges varlen packing with group filtering (`pass@1=0.609`, `4580 tok/s`, `4.4× MAD` above run-to-run noise), while `node-11` streams live `PROGRESS: 128/200 steps` updates inside Overview.
 
 ---
 
-## Quick Start (3 Steps)
+## Quick Start
 
-### 1. Build & Install `exptree`
+### Option A — Let Your Coding Agent Install It
+
+Paste this prompt into Codex, OpenCode, Pi, or Antigravity:
+
+```text
+Read https://github.com/Sarment/exp-tree and install exptree locally (plus configure this agent backend via `exptree setup`).
+```
+
+### Option B — 3-Step Manual Install & 10-Second Demo
+
 Requires Go 1.17+ and Git:
+
 ```bash
 git clone https://github.com/Sarment/exp-tree.git
 cd exp-tree
 ./scripts/install.sh
 ```
-This compiles `exptree` (`CGO_ENABLED=0`), installs `~/.local/bin/exptree` (with compatibility symlink `~/.local/bin/etree`), and pre-builds cached static Linux `amd64` and `arm64` binaries under `~/.local/share/exptree/` for instant remote deployment.
 
-### 2. Run the 10-Second Multi-Objective Demo
+This compiles `exptree` (`CGO_ENABLED=0`), installs `~/.local/bin/exptree` (with compatibility symlink `~/.local/bin/etree`), and pre-builds cached static Linux `amd64`/`arm64` binaries under `~/.local/share/exptree/` for SSH deployment.
+
+Run the included self-contained multi-objective demo and inspect the Web UI in your browser:
+
 ```bash
 ./examples/run_pareto_demo.sh
-```
-This creates a self-contained Kepler orbital integration benchmark (`pos_err:min,orbits_per_sec:max` subject to `energy_drift<=0.001,ang_mom_drift<=1e-6`), demonstrates constraint pruning (`node-1`), discovers two trade-off leaders (`node-2`, `node-3`), and merges them (`node-4`).
-
-Inspect the resulting DAG, trade-off chart, and preserved failure diff in your browser:
-```bash
 exptree serve -repo examples/pareto_workspace -addr 127.0.0.1:7421
 ```
 
-### 3. Connect Your Coding Agent Backend
-Run `exptree setup <backend>` to print ready-to-paste configuration (or remote deployment hints):
+Print integration config for your agent backend:
+
 ```bash
-exptree setup codex
-exptree setup opencode
-exptree setup pi
-exptree setup dsh
-exptree setup antigravity
-exptree setup remote
+exptree setup codex       # also: opencode | pi | dsh | antigravity | remote
 ```
-Then load [`skills/exptree/SKILL.md`](skills/exptree/SKILL.md) (or invoke `/exptree` in Antigravity with the full multi-agent plugin under [`adapters/antigravity/`](adapters/antigravity/)).
+
+Load [`skills/exptree/SKILL.md`](skills/exptree/SKILL.md) (or invoke `/exptree` in Antigravity with the plugin under [`adapters/antigravity/`](adapters/antigravity/)).
 
 ---
 
-## Multi-Backend Support Matrix
+## What It Solves & Core Capabilities
 
-Host Coding Agents own multi-agent scheduling and drive `exptree` via CLI or MCP; `exptree` provides the shared state engine, `git worktree` isolation, objective evaluator, and optional `exptree converge -supervisor <backend>` conflict-resolution hook.
+In multi-round optimization with coding agents, practical bottlenecks appear quickly after the first few iterations:
+- You want to look back at an earlier failed branch, see the exact code diff and failure reason, or fork a fix directly from it without excavating terminal logs.
+- You are running multiple optimization ideas concurrently and want one board comparing metrics, constraint breaches, statistical confidence, and lineage instead of scattered files and tabs.
+- Several rounds later, it is easy to forget *why* the agent changed a training loss or rollout kernel—each node binds hypothesis, step log, Git diff, and evaluation metrics together.
+- When real evaluations run for hours on a remote Linux/GPU host, polling logs via ad-hoc SSH commands becomes tedious; the board keeps remote execution centralized with an offline read-only local cache.
 
-| Agent Backend | Integration Surface | Converge Supervisor Driver | Session Env Auto-Detect | Setup Guide |
+Under the dashboard, ExpTree provides a concrete Git and evaluation harness:
+
+- **Hidden DAG State & Isolated Worktrees**: Stores state in `.git/exp-tree/state.json` outside tracked files so `git status` stays clean and survives `git reset --hard`. Concurrent updates synchronize via `syscall.Flock` and atomic renames; each branch edits inside `.git/exp-tree/worktrees/<node-id>`.
+- **Preserved Failure Commits, Revisits & Retry Branching**: Failed, regressed, or constraint-violating experiments are committed onto `exp/<node-id>` before restoring a clean workspace. Agents can inspect failure diffs, fork fixes directly (`branch -parent <pruned-node>`), and tag retries when an earlier assumption changes (`branch -revisits <pruned-node>`).
+- **Hard Constraints, MAD Confidence & Anti-Thrash Guard**: Enforces domain invariants (`kl_div<=0.08, peak_vram_gb<=76`) separately from competing objectives (`pass_at_1:max, rollout_tok_s:max`). `brief` and Overview track improvement vs. run-to-run variance using Median Absolute Deviation (`N× MAD`) and warn after 3+ consecutive pruned runs.
+- **N-to-1 Convergence & Winner Finalization**: `exptree converge` runs a 3-way Git merge probe first; on overlapping edits, it aborts cleanly, compiles parent diffs for semantic synthesis, and always re-evaluates the merged code. `exptree finalize` exports a clean branch (`exptree/winner-<id>`) with a PR-ready diff and metric summary.
+- **Multi-Hour & Remote Compute Support**: Unlimited default eval timeout (`-timeout 0`), detached `Setsid` sessions (`-detach`) with in-place `PROGRESS:` streaming, external cluster backfill (`step`/`record`), PID liveness reconciliation (`signal 0`), and single-binary SSH deployment (`exptree deploy -ssh <host>`).
+
+**When to use / when not needed**:
+- **Good fit**: Agentic RL / ML training loops, CUDA/rollout kernels, compiler passes, or systems benchmarks where multiple branches run against objective metrics over hours or days.
+- **Not needed**: Standard CRUD feature work, one-off bug fixes, or small edits where single-turn verification is already enough.
+
+---
+
+## Multi-Backend Support
+
+Host Coding Agents schedule subagents and drive `exptree` via CLI or MCP; `exptree` manages shared state, `git worktree` isolation, objective evaluation, and optional `exptree converge -supervisor <backend>` conflict synthesis.
+
+| Agent Backend | Integration Surface | Converge Supervisor Driver | Session Env Auto-Detect | Setup Command |
 | --- | --- | --- | --- | --- |
 | **Codex** | MCP (`exptree mcp`) + CLI + `AGENTS.md` + `skills/` | `codex exec --full-auto` | `CODEX_THREAD_ID` | `exptree setup codex` |
 | **OpenCode** | MCP + Plugin Hook (`adapters/opencode`) + `skills/` | `opencode run` | `OPENCODE_SESSION_ID` | `exptree setup opencode` |
 | **Pi** | Native Extension (`adapters/pi`) + `/exptree` + `exptree serve` | `pi -p` | `PI_SESSION_ID` | `exptree setup pi` |
-| **DeepSeek Harness (`dsh`)** | YAML Overlay Patch (`adapters/dsh/exptree.yml`) + Hooks | `dsh headless` | `DSH_SESSION_ID` | `exptree setup dsh` |
+| **DeepSeek Harness (`dsh`)** | YAML Overlay (`adapters/dsh/exptree.yml`) + Hooks | `dsh headless` | `DSH_SESSION_ID` | `exptree setup dsh` |
 | **Antigravity IDE** | Native Sidecar Plugin + `/exptree` + `exp-scout` / `exp-worker` / `exp-synthesizer` | `exp-synthesizer` (host `invoke_subagent`) | `ANTIGRAVITY_CONVERSATION_ID` | `exptree setup antigravity` |
 
 ---
 
 ## Remote SSH / GPU Server Workflow
 
-When your codebase, solvers, and compute stay on a remote Linux/GPU host (e.g. `gpu-a100:/data/exp/proj`) while your IDE runs locally:
+Keep your codebase, training checkpoints, and GPU compute on a remote Linux host (`gpu-a100:/data/exp/proj`) while viewing and steering experiments from your local IDE:
 
-| Plane | Where It Lives | Responsibility |
+| Plane | Location | Responsibility |
 | --- | --- | --- |
 | **Remote Server (Source of Truth)** | `gpu-a100:/data/exp/proj` | Runs `exptree` CLI/MCP, holds Git commits, worktrees, and `.git/exp-tree/state.json` |
-| **Local Anchor** | `.exptree_bindings/<convId>.json` | Stores `mode: "remote"` with SSH host, optional HTTP URL, and local UI focus |
-| **Offline Cache** | `.exptree_cache/<convId>.json` | Read-only local snapshot updated on every poll; keeps DAG viewable when offline |
+| **Local Anchor** | `.exptree_bindings/<convId>.json` | Stores `mode: "remote"`, SSH host, optional HTTP URL, and local UI focus |
+| **Offline Cache** | `.exptree_cache/<convId>.json` | Read-only local mirror refreshed on poll; keeps the DAG browsable offline |
 
-1. **Auto-deploy `exptree` over SSH (zero remote toolchain required)**:
+1. **Deploy the static binary over SSH (no remote Go toolchain required)**:
    ```bash
    exptree deploy -ssh gpu-a100
    ```
-   Probes remote OS/arch, transfers the matching static binary from `~/.local/share/exptree/` over a persistent `SSH ControlMaster` socket, and skips transfer if the version already matches.
+   Probes remote OS/arch, transfers the matching static binary from `~/.local/share/exptree/` over a persistent `SSH ControlMaster` socket, and skips transfer if the version matches.
 2. **Option A — Zero-Daemon Direct SSH (Recommended)**:
    ```bash
    ssh gpu-a100 "cd /data/exp/proj && ~/.local/bin/exptree init -goal '<goal>' -has-baseline=false"
    exptree bind -ssh gpu-a100 -repo /data/exp/proj
    ```
-   Once bound with `-ssh`, local commands (`brief`, `view`, `recommend`, `branch`, `eval`, `step`, `record`, `converge`, `resume`) automatically proxy to `gpu-a100:/data/exp/proj` and prepend the node currently selected in your local sidebar.
+   Once bound with `-ssh`, local commands (`brief`, `view`, `recommend`, `branch`, `eval`, `step`, `record`, `converge`, `finalize`, `resume`) proxy transparently to `gpu-a100:/data/exp/proj` and prepend the node currently selected in your local sidebar.
 3. **Option B — Real-Time HTTP Proxy over SSH Tunnel**:
    ```bash
    ssh gpu-a100 "~/.local/bin/exptree serve -repo /data/exp/proj -addr 127.0.0.1:7421"
@@ -179,34 +127,62 @@ When your codebase, solvers, and compute stay on a remote Linux/GPU host (e.g. `
 
 ---
 
+## Architecture & Workflow Guardrails
+
+```mermaid
+flowchart LR
+  Agent["Coding Agent"] --> Proto["exptree CLI / stdio MCP"]
+  Proto --> Core
+  subgraph Core["ExpTree Core (Go)"]
+    direction TB
+    State["DAG State (.git/exp-tree/state.json)"]
+    WT["Worktree Sandbox (exp/<node-id>)"]
+    Eval["Evaluator & 3-Way Merge Probe"]
+  end
+  Core --> Host["Compute Host (Local or SSH)"]
+  Core --> UI["Visual UI (exptree serve · Sidecar)"]
+```
+
+- **Scientific Readiness Gate**: Avoids scaffolding placeholder code during early paper surveys or problem framing; checks that research direction, target codebase/baseline (`node-0`), and benchmark + runtime budget are settled before branching.
+- **Prior-Art Check**: Separates reproducing known baselines (`node-0`) from exploratory branches by running read-only literature and codebase checks (`exp-scout`) ahead of optimization edits.
+- **Per-Session Isolation**: Isolates active tree bindings per conversation or thread (`ANTIGRAVITY_CONVERSATION_ID`, `CODEX_THREAD_ID`, `OPENCODE_SESSION_ID`, `PI_SESSION_ID`, `DSH_SESSION_ID`, `ETREE_SESSION_ID`).
+
+---
+
 ## CLI & MCP Reference
 
+<details>
+<summary>Expand full CLI command reference and MCP tool list</summary>
+
 ### CLI Commands
+
 ```bash
 # 1. Optional placeholder before slow baseline prep (marks node-0 EXPLORING)
 exptree init -repo <DIR> -goal "<topic>" -has-baseline=false
 
 # 2. Initialize / finalize baseline with objectives & hard constraints
 exptree up -repo <DIR> -goal "<goal>" \
-  -objectives "pos_err:min,orbits_per_sec:max" \
-  -constraints "energy_drift<=0.001,ang_mom_drift<=1e-6" \
-  -eval-cmd "python3 bench.py" -serve=false
+  -objectives "pass_at_1:max,rollout_tok_s:max" \
+  -constraints "kl_div<=0.08,peak_vram_gb<=76" \
+  -eval-cmd "python3 eval_swebench.py" -serve=false
 
-# 3. Fork an isolated worktree branch (also works from PRUNED nodes for retries)
+# 3. Fork an isolated worktree branch (supports retrying PRUNED nodes & -revisits tag)
 exptree branch -repo <DIR> -parent node-0 -agent codex -hypothesis "<mechanism>" -worktree
+exptree branch -repo <DIR> -parent node-2 -revisits node-1 -hypothesis "<revisit>" -worktree
 
 # 4. Evaluate objectively (-timeout 0 unlimited by default; -detach for multi-hour runs)
-exptree eval -repo <DIR> -node <node-id> -cmd "python3 bench.py" -rollback=true
+exptree eval -repo <DIR> -node <node-id> -cmd "python3 eval_swebench.py" -rollback=true
 exptree eval -repo <DIR> -node <node-id> -cmd "<long-running-cmd>" -detach
 
 # 5. Stream live progress or record results from external cluster / Slurm jobs
-exptree step -repo <DIR> -node <node-id> -msg "120/1000 solved=96"
-exptree record -repo <DIR> -node <node-id> -from-file <log>   # or -metrics "solved=96,conflicts=0"
+exptree step -repo <DIR> -node <node-id> -msg "128/200 steps pass@1=0.624"
+exptree record -repo <DIR> -node <node-id> -from-file <log>   # or -metrics "pass_at_1=0.62,kl_div=0.04"
 
-# 6. Converge 2+ leading / validated branches N-to-1
-exptree converge -repo <DIR> -parents node-2,node-3 -supervisor codex
+# 6. Converge 2+ leading / validated branches N-to-1 & finalize a PR-ready winner branch
+exptree converge -repo <DIR> -parents node-8,node-6 -supervisor codex
+exptree finalize -repo <DIR> [-node node-10] [-branch exptree/winner]
 
-# 7. Read structured tree brief, node details, expansion hints, or recover orphaned PIDs
+# 7. Read structured tree brief (MAD confidence & guards), node details, or recover orphaned PIDs
 exptree brief -repo <DIR>
 exptree view -repo <DIR> -node <node-id>
 exptree recommend -repo <DIR>
@@ -222,7 +198,10 @@ exptree version
 ```
 
 ### MCP Server (`exptree mcp`)
+
 Exposes 6 JSON-RPC 2.0 tools over stdio: `etree_init`, `etree_brief`, `etree_branch`, `etree_eval`, `etree_converge`, and `etree_recommend`.
+
+</details>
 
 ---
 
@@ -230,16 +209,16 @@ Exposes 6 JSON-RPC 2.0 tools over stdio: `etree_init`, `etree_brief`, `etree_bra
 
 ```
 exptree/
-├── cmd/exptree/                # CLI entrypoint, remote SSH proxy/deploy, backend setup generator
+├── cmd/exptree/                # CLI entrypoint, finalize, remote SSH proxy/deploy, setup generator
 ├── internal/
-│   ├── tree/                   # Process-safe DAG engine, multi-objective selection, session focus
+│   ├── tree/                   # Process-safe DAG engine, MAD confidence & guards, multi-objective selection
 │   ├── eval/                   # Auto/JSON/GoBench/Regex graders + commit-preserving rollback runner
 │   ├── crossover/              # 3-way merge conflict prober + N-to-1 synthesis brief generator
-│   ├── orchestrator/           # PID orphan recovery (resume), converge supervisor drivers, and experimental Go dispatch library
-│   ├── gitops/                 # .git/exp-tree/ snapshot, diff, and worktree primitives
+│   ├── orchestrator/           # PID orphan recovery (resume), converge supervisor drivers, experimental dispatch
+│   ├── gitops/                 # .git/exp-tree/ snapshot, diff, branch, and worktree primitives
 │   ├── mcp/                    # Stdio MCP server
-│   ├── server/ & internal/webui/ # Embedded HTTP API & zero-dependency Web UI
-│   └── metabench/              # Synthetic deterministic simulation for unit-testing tree-search & dedup logic
+│   ├── server/ & internal/webui/ # Embedded HTTP API & bilingual Web UI
+│   └── metabench/              # Synthetic simulation for unit-testing tree-search & dedup logic
 ├── skills/exptree/             # Backend-agnostic /exptree workflow skill
 ├── adapters/
 │   ├── codex/                  # Codex MCP config & AGENTS.md template

@@ -8,6 +8,275 @@
   const urlParams = new URLSearchParams(location.search);
   const currentConv = () => window.sidecar?.conversationId || urlParams.get('conversationId') || '';
 
+  const LANG = (() => {
+    const q = (urlParams.get('lang') || '').toLowerCase();
+    if (q === 'en' || q === 'zh') return q;
+    return (navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  })();
+  document.documentElement.lang = LANG === 'en' ? 'en' : 'zh-CN';
+
+  const I18N = {
+    en: {
+      follow: 'Follow',
+      followTitle: 'Auto-follow the latest or active node in this tree',
+      refreshTitle: 'Refresh now',
+      menuTitle: 'Switch or manage experiment trees',
+      tabTree: 'Tree',
+      tabChanges: 'Changes',
+      tabOverview: 'Overview',
+      modeRail: 'Rail',
+      modeMap: 'DAG Map',
+      filterAll: 'All nodes',
+      filterWin: 'Promoted / Leading only',
+      filterPruned: 'Pruned only',
+      zoomOut: 'Zoom out',
+      zoomReset: 'Reset zoom',
+      zoomIn: 'Zoom in',
+      focusClear: 'Clear selection',
+      focusHintSingle: 'Say "this node..." in chat',
+      focusHintMulti: 'Say "converge selected branches"',
+      focusSingle: (id) => `Focused ${id}`,
+      focusMulti: (n, ids) => `Selected ${n} · ${ids}`,
+      emptyTitle: 'No experiment tree bound yet',
+      emptySub: 'Describe your research or optimization goal in chat to initialize a tree automatically.',
+      emptyDraft: 'Send a prompt in chat to initialize or bind a repository',
+      emptyOrBind: 'or bind an existing repository',
+      bindBtn: 'Bind',
+      watchIdle: 'Waiting for chat prompt…',
+      watchActive: 'Listening to this conversation…',
+      menuRebind: 'Switch repository',
+      menuUnbind: 'Unbind conversation',
+      menuHint: 'Start a new conversation for a new topic',
+      noLocalRepos: 'No local experiment repositories found',
+      tagCurrent: 'Current',
+      tagOtherConv: 'Other chat',
+      tagNoTree: 'Empty',
+      tagNodes: (n) => `${n} nodes`,
+      previewBind: 'Bind to chat',
+      previewBack: 'Back',
+      previewBackBound: 'Back to bound tree',
+      previewLabel: (name) => `Previewing ${name} (unbound)`,
+      retry: 'Retry',
+      offlineBanner: 'Remote disconnected · offline read-only cache',
+      offlineBannerAt: (t) => `Remote disconnected · offline cache (${t})`,
+      offlineUninitTitle: 'Cannot reach remote experiment tree',
+      offlineUninitDesc: (ep) => `Unable to reach ${ep} and no local cache exists yet. Verify SSH connectivity and click Retry.`,
+      remoteUninitTitle: 'Remote repository has no tree yet',
+      remoteUninitDesc: (r) => `Bound to remote ${r}; run exptree init or exptree up there to sync automatically.`,
+      localUninitTitle: 'No experiment tree in bound repository',
+      localUninitDesc: 'Describe your optimization goal in chat to initialize a tree automatically, or switch repos from the top-right menu.',
+      convPrefix: (c) => (c ? `Chat ${c.slice(0, 8)}…` : 'Standalone'),
+      noBoundRepo: 'No repository bound',
+      badgeMergedLead: 'Merged · Lead',
+      badgeMerged: 'Merged',
+      badgeLead: 'Leading',
+      badgeBest: 'Best',
+      badgeBase: 'Baseline',
+      badgePass: 'Validated',
+      badgeViolate: 'Constraint failed',
+      badgePruned: 'Pruned',
+      badgeRun: 'Running',
+      badgeSynth: 'Converging',
+      reqOp: (op, th) => `req ${op} ${th}`,
+      revisitTag: (id) => `↻ Revisiting ${id}`,
+      rootBase: 'Root baseline',
+      mergedPrefix: (ps) => `Converge ${ps}`,
+      jumpDiffTitle: (p) => `View changes in ${p}`,
+      multiBtnTitle: 'Select multiple nodes to converge (or Cmd/Shift-click row)',
+      goalMulti: (specs, cCnt) => `Optimize ${specs}${cCnt ? ` · ${cCnt} hard ${cCnt === 1 ? 'gate' : 'gates'}` : ''}`,
+      goalSingle: (m, dir) => `Optimize ${m} ${dir}`,
+      paretoTitle: 'Multi-Objective Trade-off',
+      paretoNote: 'Top-right is better',
+      beatsBase: 'Beats baseline',
+      higherBetter: 'higher is better',
+      lowerBetter: 'lower is better',
+      sparkTitle: 'Best Score Trajectory',
+      sparkNote: 'Higher is better',
+      outOfRange: ' (clamped to edge)',
+      diffSelectNode: 'Select node',
+      diffVs: 'vs',
+      diffRoleBase: 'Baseline',
+      diffRoleParent: 'Parent',
+      diffLegacyPruned: 'Legacy pruned node has no saved snapshot',
+      diffOfflineTitle: 'Remote disconnected',
+      diffOfflineDesc: 'Offline read-only cache active. Restore SSH connectivity and click Retry to load diffs.',
+      diffPrunedSaved: 'Preserved failure snapshot',
+      diffPrunedDefault: 'Below baseline',
+      diffNoFiles: 'No file differences against selected baseline',
+      ovProgress: 'Progress',
+      ovLead: 'Leading',
+      ovCons: 'Gates',
+      ovBest: 'Best',
+      ovVsBase: (d) => `${d} vs baseline`,
+      ovConf: (r) => `${r.toFixed(1)}× MAD`,
+      ovConfTitle: 'Signal-to-noise ratio: improvement / Median Absolute Deviation',
+      ovFeed: 'Activity',
+      ovNoFeed: 'No activity yet',
+      ovExp: (n) => `${n} ${n === 1 ? 'run' : 'runs'}`,
+      ovSucc: (n) => `${n} passed`,
+      ovPrune: (n, v) => `${n} pruned${v ? ` (${v} violated)` : ''}`,
+      ovConv: (n) => `${n} merged`,
+      ovRun: (n) => `${n} running`,
+      toastFollowOn: 'Auto-follow enabled',
+      toastFollowOff: 'Auto-follow paused',
+      toastSynced: 'Synced latest state',
+      toastStillOffline: 'Remote still unreachable',
+      toastReconnected: 'Remote reconnected',
+      toastNoConv: 'No conversation ID detected',
+      toastBound: 'Bound to this conversation',
+      toastUnbound: 'Unbound from conversation',
+    },
+    zh: {
+      follow: '跟随',
+      followTitle: '自动跟随本树最新运行或新增的节点',
+      refreshTitle: '立即刷新',
+      menuTitle: '切换或新建探索树',
+      tabTree: '探索树',
+      tabChanges: '代码变更',
+      tabOverview: '总览',
+      modeRail: '列表轨道',
+      modeMap: '树形画布',
+      filterAll: '全部节点',
+      filterWin: '仅看已晋升 / 领先',
+      filterPruned: '仅看已剪枝',
+      zoomOut: '缩小',
+      zoomReset: '重置缩放',
+      zoomIn: '放大',
+      focusClear: '清除多选',
+      focusHintSingle: '在对话里说“这个节点…”即可指代',
+      focusHintMulti: '在对话里说“融合选中的分支”',
+      focusSingle: (id) => `聚焦 ${id}`,
+      focusMulti: (n, ids) => `已选 ${n} 个 · ${ids}`,
+      emptyTitle: '当前对话尚未绑定探索树',
+      emptySub: '直接在左侧对话框描述科研或优化主题，主 Agent 会立即建树并自动接入此面板。',
+      emptyDraft: '在左侧发送首条消息后，可自动建树或关联已有实验树',
+      emptyOrBind: '或关联已有实验树',
+      bindBtn: '绑定',
+      watchIdle: '等待左侧发起对话…',
+      watchActive: '监听当前对话中 · 左侧发起探索后将自动接入',
+      menuRebind: '关联其他已有实验树',
+      menuUnbind: '解除当前对话绑定',
+      menuHint: '开启新课题请直接新建对话',
+      noLocalRepos: '未检测到本地实验仓库',
+      tagCurrent: '当前',
+      tagOtherConv: '其他对话',
+      tagNoTree: '未建树',
+      tagNodes: (n) => `${n} 节点`,
+      previewBind: '绑定到此对话',
+      previewBack: '返回',
+      previewBackBound: '返回已绑定树',
+      previewLabel: (name) => `预览 ${name}（未绑定当前对话）`,
+      retry: '重试',
+      offlineBanner: '远端连接已断开 · 当前展示本地离线缓存（只读）',
+      offlineBannerAt: (t) => `远端连接已断开 · 离线只读缓存 (${t})`,
+      offlineUninitTitle: '无法连接远端实验树',
+      offlineUninitDesc: (ep) => `未能连接到 ${ep}，且本地尚无离线缓存。请确认 SSH 隧道或免密 SSH 已就绪后点击「重试」。`,
+      remoteUninitTitle: '远端仓库尚未初始化探索树',
+      remoteUninitDesc: (r) => `已在远端关联 ${r}，但尚未检测到探索树状态；在远端运行 exptree init 或 exptree up 后将自动同步。`,
+      localUninitTitle: '当前绑定的仓库尚无探索树',
+      localUninitDesc: '直接在左侧对话框说明科研或优化目标，主 Agent 会自动初始化探索树并实时接入此面板；也可从右上角「···」解绑或更换仓库。',
+      convPrefix: (c) => (c ? `对话 ${c.slice(0, 8)}…` : '独立模式'),
+      noBoundRepo: '当前未绑定仓库',
+      badgeMergedLead: '融合 · 领先',
+      badgeMerged: '已融合',
+      badgeLead: '领先',
+      badgeBest: '最优',
+      badgeBase: '基线',
+      badgePass: '已晋升',
+      badgeViolate: '违反约束',
+      badgePruned: '已剪枝',
+      badgeRun: '运行中',
+      badgeSynth: '融合中',
+      reqOp: (op, th) => `要求 ${op} ${th}`,
+      revisitTag: (id) => `↻ 重审 ${id}`,
+      rootBase: '根基线',
+      mergedPrefix: (ps) => `融合 ${ps}`,
+      jumpDiffTitle: (p) => `查看 ${p} 的改动`,
+      multiBtnTitle: '多选节点用于对话融合 (或按住 Cmd/Shift 点击行)',
+      goalMulti: (specs, cCnt) => `优化 ${specs}${cCnt ? ` · ${cCnt} 项硬约束` : ''}`,
+      goalSingle: (m, dir) => `优化 ${m} ${dir}`,
+      paretoTitle: '多目标权衡',
+      paretoNote: '越靠右上越优',
+      beatsBase: '优于基线',
+      higherBetter: '越大越好',
+      lowerBetter: '越小越好',
+      sparkTitle: '最优值演进',
+      sparkNote: '越靠上越优',
+      outOfRange: '（超出坐标范围，已贴边）',
+      diffSelectNode: '选择节点',
+      diffVs: '对比',
+      diffRoleBase: '基线',
+      diffRoleParent: '父节点',
+      diffLegacyPruned: '早期剪枝节点未存独立快照',
+      diffOfflineTitle: '远端连接已断开',
+      diffOfflineDesc: '当前为离线只读缓存模式，恢复远端连接后点击顶部「重试」即可加载代码变更。',
+      diffPrunedSaved: '失败快照已保留',
+      diffPrunedDefault: '未达标',
+      diffNoFiles: '该节点相对基准无文件差异',
+      ovProgress: '进展',
+      ovLead: '领先',
+      ovCons: '约束',
+      ovBest: '最优',
+      ovVsBase: (d) => `${d} vs 基线`,
+      ovConf: (r) => `置信度 ${r.toFixed(1)}× MAD`,
+      ovConfTitle: '信噪比：相对基线提升幅度 / 中位数绝对偏差 (MAD)',
+      ovFeed: '动态',
+      ovNoFeed: '暂无动态',
+      ovExp: (n) => `${n} 个实验`,
+      ovSucc: (n) => `${n} 成功`,
+      ovPrune: (n, v) => `${n} 剪枝${v ? `（${v} 违反约束）` : ''}`,
+      ovConv: (n) => `${n} 融合`,
+      ovRun: (n) => `${n} 运行中`,
+      toastFollowOn: '已开启自动跟随本树最新节点',
+      toastFollowOff: '已暂停自动跟随',
+      toastSynced: '已同步最新状态',
+      toastStillOffline: '远端仍未就绪',
+      toastReconnected: '已恢复远端连接',
+      toastNoConv: '未检测到当前对话 ID',
+      toastBound: '已绑定到此对话',
+      toastUnbound: '已解除当前对话绑定',
+    },
+  };
+
+  function t(key, ...args) {
+    const val = (I18N[LANG] && I18N[LANG][key] !== undefined) ? I18N[LANG][key] : I18N.en[key];
+    return typeof val === 'function' ? val(...args) : val;
+  }
+
+  function applyStaticI18n() {
+    const setText = (sel, val) => { const el = document.querySelector(sel); if (el) el.textContent = val; };
+    const setLeadText = (sel, val) => {
+      const el = document.querySelector(sel);
+      if (el && el.firstChild && el.firstChild.nodeType === 3) el.firstChild.textContent = `${val} `;
+    };
+    setText('#btn-follow span:last-child', t('follow'));
+    if ($('btn-follow')) $('btn-follow').title = t('followTitle');
+    if ($('btn-refresh')) { $('btn-refresh').title = t('refreshTitle'); $('btn-refresh').setAttribute('aria-label', t('refreshTitle')); }
+    if ($('btn-tree-menu')) $('btn-tree-menu').title = t('menuTitle');
+    setLeadText('.tab[data-tab="tree"]', t('tabTree'));
+    setLeadText('.tab[data-tab="changes"]', t('tabChanges'));
+    setLeadText('.tab[data-tab="overview"]', t('tabOverview'));
+    setText('#mode-rail', t('modeRail'));
+    setText('#mode-map', t('modeMap'));
+    setText('#filter-select option[value="all"]', t('filterAll'));
+    setText('#filter-select option[value="win"]', t('filterWin'));
+    setText('#filter-select option[value="pruned"]', t('filterPruned'));
+    if ($('zoom-out')) $('zoom-out').title = t('zoomOut');
+    if ($('zoom-reset')) $('zoom-reset').title = t('zoomReset');
+    if ($('zoom-in')) $('zoom-in').title = t('zoomIn');
+    setText('#focus-clear', t('focusClear'));
+    setText('.empty-hero-title', t('emptyTitle'));
+    setText('.empty-hero-sub', t('emptySub'));
+    setText('#empty-draft-note', t('emptyDraft'));
+    setText('.bind-divider span', t('emptyOrBind'));
+    setText('#btn-bind-existing', t('bindBtn'));
+    setText('#menu-toggle-rebind span:nth-child(2)', t('menuRebind'));
+    setText('#menu-unbind span:nth-child(2)', t('menuUnbind'));
+    setText('.menu-hint', t('menuHint'));
+    setText('#btn-preview-bind', t('previewBind'));
+    setText('#btn-offline-retry', t('retry'));
+  }
+
   const S = {
     buildId: '',
     workspaces: [],
@@ -164,15 +433,15 @@
     const isMulti = (S.tree?.objectives || []).length >= 2;
     const onFront = isMulti && pFront.includes(n.id);
     switch (n.status) {
-      case 'CONVERGED': return `<span class="badge conv">${onFront ? '融合 · 领先' : '已融合'}</span>`;
+      case 'CONVERGED': return `<span class="badge conv">${esc(onFront ? t('badgeMergedLead') : t('badgeMerged'))}</span>`;
       case 'VALIDATED':
-        if (onFront) return '<span class="badge pass">领先</span>';
-        if (!isMulti && n.id === bestId) return '<span class="badge pass">最优</span>';
-        if (n.id === S.tree?.root_id) return '<span class="badge muted">基线</span>';
-        return '<span class="badge pass-soft">已晋升</span>';
-      case 'PRUNED': return isViolation(n) ? '<span class="badge prune">违反约束</span>' : '<span class="badge muted">已剪枝</span>';
-      case 'EXPLORING': return '<span class="badge run live">运行中</span>';
-      case 'SYNTHESIZING': return '<span class="badge conv live">融合中</span>';
+        if (onFront) return `<span class="badge pass">${esc(t('badgeLead'))}</span>`;
+        if (!isMulti && n.id === bestId) return `<span class="badge pass">${esc(t('badgeBest'))}</span>`;
+        if (n.id === S.tree?.root_id) return `<span class="badge muted">${esc(t('badgeBase'))}</span>`;
+        return `<span class="badge pass-soft">${esc(t('badgePass'))}</span>`;
+      case 'PRUNED': return isViolation(n) ? `<span class="badge prune">${esc(t('badgeViolate'))}</span>` : `<span class="badge muted">${esc(t('badgePruned'))}</span>`;
+      case 'EXPLORING': return `<span class="badge run live">${esc(t('badgeRun'))}</span>`;
+      case 'SYNTHESIZING': return `<span class="badge conv live">${esc(t('badgeSynth'))}</span>`;
       default: return `<span class="badge muted">${esc(n.status)}</span>`;
     }
   }
@@ -197,7 +466,7 @@
         .map((o) => `<span class="m-item"><span class="m-key">${esc(o.name)}</span><span class="m-val">${esc(fmtNum(n.metrics[o.name]))}</span></span>`)
       : [];
     const breaches = constraintBreaches(n)
-      .map((c) => `<span class="metric-chip violated">${esc(c.metric)} ${esc(fmtNum(c.value))} · 要求 ${esc(opSym(c.op))} ${esc(fmtNum(c.threshold))}</span>`);
+      .map((c) => `<span class="metric-chip violated">${esc(c.metric)} ${esc(fmtNum(c.value))} · ${esc(t('reqOp', opSym(c.op), fmtNum(c.threshold)))}</span>`);
     if (!parts.length && !breaches.length) return '';
     return `${parts.length ? `<div class="metric-line">${parts.join('')}</div>` : ''}${breaches.length ? `<div class="metric-strip">${breaches.join('')}</div>` : ''}`;
   }
@@ -209,28 +478,29 @@
     }).join(' · ');
   }
 
-  // Translate engine log strings into short human sentences.
+  // Translate engine log strings into short human sentences in LANG.
   function humanizeAction(a) {
     const str = String(a || '');
+    const isEn = LANG === 'en';
     let m;
-    if ((m = /^Pareto synergy converged.*?\((.*)\)\s*$/.exec(str))) return `融合成功 · ${prettyKV(m[1])}`;
-    if ((m = /^Pareto advance \((.*)\)\s*$/.exec(str))) return `刷新领先指标 · ${prettyKV(m[1])}`;
-    if ((m = /^Multi-objective validated \((.*)\)\s*$/.exec(str))) return `验证通过 · ${prettyKV(m[1])}`;
-    if ((m = /^Baseline measured(?: \((.*)\)|:\s*(.*))\s*$/.exec(str))) return `测得基线 · ${prettyKV(m[1] || m[2])}`;
-    if ((m = /^Benchmark improved:\s*(.*)$/.exec(str))) return `指标提升 · ${prettyKV(m[1])}`;
-    if ((m = /^Regressed on (\S+): got (\S+) vs parent (\S+)/.exec(str))) return `指标退化 · ${m[1]} ${fmtNum(Number(m[2]))}（父节点 ${fmtNum(Number(m[3]))}）`;
-    if ((m = /HARD_CONSTRAINT_VIOLATED\]\s*(\S+)=(\S+) violates hard gate (\S+) (\S+)/.exec(str))) return `违反约束 · ${m[1]} ${fmtNum(Number(m[2]))}，要求 ${opSym(m[3])} ${fmtNum(Number(m[4]))}`;
-    if ((m = /HARD_CONSTRAINT_VIOLATED\]\s*missing or invalid required metric "?([^"\s]+)"?/.exec(str))) return `违反约束 · 缺少指标 ${m[1]}`;
-    if ((m = /^Pre-merge probe done \(textual_conflict=(true|false)\)/.exec(str))) return m[1] === 'true' ? '合并预检 · 有文本冲突，转入语义融合' : '合并预检 · 无文本冲突';
-    if ((m = /^Pareto-dominated by (\S+): got \((.*?)\)/.exec(str))) return `全面弱于 ${m[1]} · ${prettyKV(m[2])}`;
-    if ((m = /^Convergence dominated by parent (\S+)/.exec(str))) return `融合未达标 · 全面弱于父节点 ${m[1]}`;
-    if ((m = /^Convergence failed to reach Pareto frontier: \((.*)\)/.exec(str))) return `融合未刷新领先指标 · ${prettyKV(m[1])}`;
-    if ((m = /^Convergence did not improve.*?\((.*)\)/.exec(str))) return `融合无协同增益 · ${prettyKV(m[1])}`;
-    if ((m = /AssertionError:\s*(.*)$/.exec(str))) return `正确性校验失败 · ${m[1]}`;
-    if ((m = /^\[SMOKE_GATE_FAILED\]\s*(.*)$/.exec(str))) return `冒烟测试失败 · ${m[1]}`;
-    if ((m = /^\[CONSTRAINT_GATE_FAILED\]\s*(.*)$/.exec(str))) return `违反约束 · ${m[1]}`;
-    if ((m = /^Eval failed:\s*(.*)$/.exec(str))) return `评测失败 · ${m[1]}`;
-    if (/^Smoke sanity gate passed/.test(str)) return '冒烟测试通过';
+    if ((m = /^Pareto synergy converged.*?\((.*)\)\s*$/.exec(str))) return `${isEn ? 'Merged' : '融合成功'} · ${prettyKV(m[1])}`;
+    if ((m = /^Pareto advance \((.*)\)\s*$/.exec(str))) return `${isEn ? 'New frontier' : '刷新领先指标'} · ${prettyKV(m[1])}`;
+    if ((m = /^Multi-objective validated \((.*)\)\s*$/.exec(str))) return `${isEn ? 'Validated' : '验证通过'} · ${prettyKV(m[1])}`;
+    if ((m = /^Baseline measured(?: \((.*)\)|:\s*(.*))\s*$/.exec(str))) return `${isEn ? 'Baseline' : '测得基线'} · ${prettyKV(m[1] || m[2])}`;
+    if ((m = /^Benchmark improved:\s*(.*)$/.exec(str))) return `${isEn ? 'Improved' : '指标提升'} · ${prettyKV(m[1])}`;
+    if ((m = /^Regressed on (\S+): got (\S+) vs parent (\S+)/.exec(str))) return isEn ? `Regressed · ${m[1]} ${fmtNum(Number(m[2]))} (parent ${fmtNum(Number(m[3]))})` : `指标退化 · ${m[1]} ${fmtNum(Number(m[2]))}（父节点 ${fmtNum(Number(m[3]))}）`;
+    if ((m = /HARD_CONSTRAINT_VIOLATED\]\s*(\S+)=(\S+) violates hard gate (\S+) (\S+)/.exec(str))) return isEn ? `Gate violated · ${m[1]} ${fmtNum(Number(m[2]))} (req ${opSym(m[3])} ${fmtNum(Number(m[4]))})` : `违反约束 · ${m[1]} ${fmtNum(Number(m[2]))}，要求 ${opSym(m[3])} ${fmtNum(Number(m[4]))}`;
+    if ((m = /HARD_CONSTRAINT_VIOLATED\]\s*missing or invalid required metric "?([^"\s]+)"?/.exec(str))) return isEn ? `Gate violated · missing ${m[1]}` : `违反约束 · 缺少指标 ${m[1]}`;
+    if ((m = /^Pre-merge probe done \(textual_conflict=(true|false)\)/.exec(str))) return isEn ? (m[1] === 'true' ? 'Merge probe · textual conflict, switching to semantic synthesis' : 'Merge probe · clean merge') : (m[1] === 'true' ? '合并预检 · 有文本冲突，转入语义融合' : '合并预检 · 无文本冲突');
+    if ((m = /^Pareto-dominated by (\S+): got \((.*?)\)/.exec(str))) return isEn ? `Dominated by ${m[1]} · ${prettyKV(m[2])}` : `全面弱于 ${m[1]} · ${prettyKV(m[2])}`;
+    if ((m = /^Convergence dominated by parent (\S+)/.exec(str))) return isEn ? `Merge dominated by parent ${m[1]}` : `融合未达标 · 全面弱于父节点 ${m[1]}`;
+    if ((m = /^Convergence failed to reach Pareto frontier: \((.*)\)/.exec(str))) return isEn ? `Merge missed frontier · ${prettyKV(m[1])}` : `融合未刷新领先指标 · ${prettyKV(m[1])}`;
+    if ((m = /^Convergence did not improve.*?\((.*)\)/.exec(str))) return isEn ? `No merge synergy · ${prettyKV(m[1])}` : `融合无协同增益 · ${prettyKV(m[1])}`;
+    if ((m = /AssertionError:\s*(.*)$/.exec(str))) return isEn ? `Assertion failed · ${m[1]}` : `正确性校验失败 · ${m[1]}`;
+    if ((m = /^\[SMOKE_GATE_FAILED\]\s*(.*)$/.exec(str))) return isEn ? `Smoke failed · ${m[1]}` : `冒烟测试失败 · ${m[1]}`;
+    if ((m = /^\[CONSTRAINT_GATE_FAILED\]\s*(.*)$/.exec(str))) return isEn ? `Gate violated · ${m[1]}` : `违反约束 · ${m[1]}`;
+    if ((m = /^Eval failed:\s*(.*)$/.exec(str))) return isEn ? `Eval failed · ${m[1]}` : `评测失败 · ${m[1]}`;
+    if (/^Smoke sanity gate passed/.test(str)) return isEn ? 'Smoke gate passed' : '冒烟测试通过';
     return str;
   }
 
@@ -261,12 +531,12 @@
     let hintSeen = 0;
     try { hintSeen = Number(localStorage.getItem('exptree_hint_seen') || 0); } catch { hintSeen = 99; }
     if (isMulti) {
-      $('focus-text').textContent = `已选 ${multiIds.length} 个 · ${multiIds.join(' ⊕ ')}`;
-      $('focus-hint').textContent = '在对话里说“融合选中的分支”';
+      $('focus-text').textContent = t('focusMulti', multiIds.length, multiIds.join(' ⊕ '));
+      $('focus-hint').textContent = t('focusHintMulti');
       $('focus-hint').classList.remove('hidden');
     } else {
-      $('focus-text').textContent = `聚焦 ${S.selectedId}`;
-      $('focus-hint').textContent = '在对话里说“这个节点…”即可指代';
+      $('focus-text').textContent = t('focusSingle', S.selectedId);
+      $('focus-hint').textContent = t('focusHintSingle');
       $('focus-hint').classList.toggle('hidden', hintSeen >= 3);
       if (hintSeen < 3 && S.lastHintNode !== S.selectedId) {
         S.lastHintNode = S.selectedId;
@@ -412,12 +682,12 @@
     if (!S.rebindListOpen) return;
 
     if (!S.repos.length) {
-      list.innerHTML = '<div class="menu-repo-item" style="color:var(--et-fg-faint);cursor:default;">未检测到本地实验仓库</div>';
+      list.innerHTML = `<div class="menu-repo-item" style="color:var(--et-fg-faint);cursor:default;">${esc(t('noLocalRepos'))}</div>`;
       return;
     }
     list.innerHTML = S.repos.map((r) => {
       const cur = S.mode !== 'remote' && r.path === S.boundRepo;
-      const tag = cur ? '当前' : (r.boundByOther ? '其他对话' : (r.hasTree ? `${r.nodeCount} 节点` : '未建树'));
+      const tag = cur ? t('tagCurrent') : (r.boundByOther ? t('tagOtherConv') : (r.hasTree ? t('tagNodes', r.nodeCount) : t('tagNoTree')));
       return `<button type="button" class="menu-repo-item ${cur ? 'current' : ''}" data-bind-repo="${esc(r.path)}" title="${esc(r.path)}">
         <span class="menu-repo-name">${esc(r.label)}</span>
         <span class="menu-repo-tag">${esc(tag)}</span>
@@ -435,10 +705,8 @@
     const showOffline = Boolean(S.offline && S.mode === 'remote' && !isPreview);
     banner.classList.toggle('hidden', !showOffline);
     if (showOffline) {
-      const t = S.cachedAt ? fmtTime(S.cachedAt) : '';
-      $('offline-label').textContent = t
-        ? `远端连接已断开 · 离线只读缓存 (${t})`
-        : '远端连接已断开 · 当前展示本地离线缓存（只读）';
+      const tm = S.cachedAt ? fmtTime(S.cachedAt) : '';
+      $('offline-label').textContent = tm ? t('offlineBannerAt', tm) : t('offlineBanner');
       banner.title = S.offlineReason || '';
     }
 
@@ -446,14 +714,14 @@
     const uDesc = $('uninit-desc');
     if (uTitle && uDesc && !S.initialized) {
       if (S.mode === 'remote' && !isPreview && S.offline) {
-        uTitle.textContent = '无法连接远端实验树';
-        uDesc.textContent = `未能连接到 ${S.remote?.endpoint || S.remote?.ssh_host || '远端服务器'}，且本地尚无离线缓存。请确认 SSH 隧道或免密 SSH 已就绪后点击「重试」。`;
+        uTitle.textContent = t('offlineUninitTitle');
+        uDesc.textContent = t('offlineUninitDesc', S.remote?.endpoint || S.remote?.ssh_host || 'remote');
       } else if (S.mode === 'remote' && !isPreview) {
-        uTitle.textContent = '远端仓库尚未初始化探索树';
-        uDesc.textContent = `已在远端关联 ${S.repo}，但尚未检测到探索树状态；在远端运行 exptree init 或 exptree up 后将自动同步。`;
+        uTitle.textContent = t('remoteUninitTitle');
+        uDesc.textContent = t('remoteUninitDesc', S.repo);
       } else {
-        uTitle.textContent = '当前绑定的仓库尚无探索树';
-        uDesc.textContent = '直接在左侧对话框说明科研或优化目标，主 Agent 会自动初始化探索树并实时接入此面板；也可从右上角「···」解绑或更换仓库。';
+        uTitle.textContent = t('localUninitTitle');
+        uDesc.textContent = t('localUninitDesc');
       }
     }
   }
@@ -478,10 +746,10 @@
       if (!S.conv) {
         draftNote?.classList.remove('hidden');
         bindBlock?.classList.add('hidden');
-        if (watchText) watchText.textContent = '等待左侧发起对话…';
+        if (watchText) watchText.textContent = t('watchIdle');
       } else {
         draftNote?.classList.add('hidden');
-        if (watchText) watchText.textContent = '监听当前对话中 · 左侧发起探索后将自动接入';
+        if (watchText) watchText.textContent = t('watchActive');
         if (!S.repos.length) {
           bindBlock?.classList.add('hidden');
         } else {
@@ -490,8 +758,8 @@
           if (sig !== S.lastReposSig && document.activeElement !== sel) {
             S.lastReposSig = sig;
             sel.innerHTML = S.repos.map((r) => {
-              const suffix = r.boundByOther ? '（其他对话绑定）' : (r.hasTree ? `（${r.nodeCount} 节点）` : '（未建树）');
-              return `<option value="${esc(r.path)}">${esc(r.label)}${esc(suffix)}</option>`;
+              const suffix = r.boundByOther ? t('tagOtherConv') : (r.hasTree ? t('tagNodes', r.nodeCount) : t('tagNoTree'));
+              return `<option value="${esc(r.path)}">${esc(r.label)} (${esc(suffix)})</option>`;
             }).join('');
           }
         }
@@ -505,11 +773,11 @@
       const showRemoteBadge = Boolean(!S.standalone && !isPreview && S.mode === 'remote');
       remoteBadge.classList.toggle('hidden', !showRemoteBadge);
       if (showRemoteBadge) {
-        const hostLbl = S.remote?.ssh_host || (S.remote?.transport === 'http' ? 'HTTP 隧道' : '远端');
+        const hostLbl = S.remote?.ssh_host || (S.remote?.transport === 'http' ? 'HTTP' : 'Remote');
         remoteBadge.innerHTML = `${ICON_SERVER}<span>${esc(hostLbl)}</span>`;
         remoteBadge.title = S.remote?.transport === 'http'
-          ? `HTTP 隧道 (${S.remote.endpoint}) · ${S.boundRepo}`
-          : `SSH 直连 (${hostLbl}) · ${S.boundRepo}`;
+          ? `HTTP (${S.remote.endpoint}) · ${S.boundRepo}`
+          : `SSH (${hostLbl}) · ${S.boundRepo}`;
       }
     }
     $('btn-tree-menu').classList.toggle('hidden', S.standalone || !S.conv);
@@ -517,8 +785,8 @@
     const previewEl = $('preview-banner');
     if (isPreview) {
       previewEl.classList.remove('hidden');
-      $('preview-label').textContent = `预览 ${repoShortName()}（未绑定当前对话）`;
-      $('btn-preview-back').textContent = S.bound ? '返回已绑定树' : '返回';
+      $('preview-label').textContent = t('previewLabel', repoShortName());
+      $('btn-preview-back').textContent = S.bound ? t('previewBackBound') : t('previewBack');
     } else {
       previewEl.classList.add('hidden');
     }
@@ -527,13 +795,13 @@
       const prefix = S.remote?.ssh_host ? `${S.remote.ssh_host}:` : '';
       $('menu-meta-path').textContent = `${prefix}${S.boundRepo}`;
       $('menu-meta-path').title = S.remote?.transport === 'http'
-        ? `HTTP 隧道 ${S.remote.endpoint} -> ${S.boundRepo}`
+        ? `HTTP ${S.remote.endpoint} -> ${S.boundRepo}`
         : `SSH ${S.remote?.ssh_host || ''} -> ${S.boundRepo}`;
     } else {
-      $('menu-meta-path').textContent = S.boundRepo || '当前未绑定仓库';
+      $('menu-meta-path').textContent = S.boundRepo || t('noBoundRepo');
       $('menu-meta-path').title = S.boundRepo || '';
     }
-    $('menu-meta-conv').textContent = S.conv ? `对话 ${S.conv.slice(0, 8)}…` : '独立模式';
+    $('menu-meta-conv').textContent = t('convPrefix', S.conv);
     $('menu-unbind').classList.toggle('hidden', !S.bound);
     renderMenuRepoList();
     updateOfflineBanner();
@@ -588,7 +856,7 @@
 
   async function bindRepo(repoPath) {
     if (!S.conv) {
-      showToast('未检测到当前对话 ID');
+      showToast(t('toastNoConv'));
       return;
     }
     try {
@@ -598,9 +866,9 @@
       await syncBinding(false);
       await pollState(true);
       syncFocusBackend();
-      showToast(repoPath ? '已绑定到此对话' : '已解除当前对话绑定');
+      showToast(repoPath ? t('toastBound') : t('toastUnbound'));
     } catch (err) {
-      showToast(`操作失败：${err.message || err}`);
+      showToast(`${err.message || err}`);
     }
   }
 
@@ -687,9 +955,10 @@
     $('goal-bar').title = S.tree.goal || '';
     const objs = S.tree.objectives || [];
     if (objs.length >= 2) {
-      $('goal-dir').textContent = `优化 ${objs.map((o) => `${o.name} ${o.higher_is_better ? '↑' : '↓'}`).join(' · ')}${(S.tree.constraints || []).length ? ` · ${S.tree.constraints.length} 项硬约束` : ''}`;
+      const specs = objs.map((o) => `${o.name} ${o.higher_is_better ? '↑' : '↓'}`).join(' · ');
+      $('goal-dir').textContent = t('goalMulti', specs, (S.tree.constraints || []).length);
     } else {
-      $('goal-dir').textContent = `优化 ${S.tree.metric_name || 'score'} ${S.tree.higher_is_better ? '↑' : '↓'}`;
+      $('goal-dir').textContent = t('goalSingle', S.tree.metric_name || 'score', S.tree.higher_is_better ? '↑' : '↓');
     }
 
     const allNodes = Object.values(S.tree.nodes || {});
@@ -732,7 +1001,7 @@
 
     const filesHtml = files.length ? `
       <div class="changed-files-row">
-        ${files.map((f, idx) => `<button type="button" class="changed-chip" data-jump-diff-node="${esc(n.id)}" data-jump-diff-idx="${idx}" title="查看 ${esc(f.path)} 的改动">
+        ${files.map((f, idx) => `<button type="button" class="changed-chip" data-jump-diff-node="${esc(n.id)}" data-jump-diff-idx="${idx}" title="${esc(t('jumpDiffTitle', f.path))}">
             ${ICON_FILE}<span>${esc(f.path.split('/').pop())}</span>
             <span class="add">+${f.additions}</span><span class="del">−${f.deletions}</span>
           </button>`).join('')}
@@ -743,7 +1012,7 @@
     return `
       <div class="detail-meta">
         <span>${esc((n.git_commit || 'working').slice(0, 7))}</span>
-        <span>${pids.length ? `← ${esc(pids.join(' ⊕ '))}` : '根基线'}</span>
+        <span>${pids.length ? `← ${esc(pids.join(' ⊕ '))}` : esc(t('rootBase'))}</span>
         ${n.agent_id ? `<span>${esc(n.agent_id)}</span>` : ''}
       </div>
       ${digest ? `<div class="callout ${isViolation(n) ? '' : 'muted'}">${esc(digest)}</div>` : ''}
@@ -768,13 +1037,13 @@
 
   // Collapse verbose "Converge [node-2 + node-3]: A ⊕ B" titles into a short headline + muted subtitle.
   function hypoParts(n) {
-    const h = n.hypothesis || (parentsOf(n).length ? '' : 'Root Baseline');
+    const h = n.hypothesis || (parentsOf(n).length ? '' : t('rootBase'));
     const m = /^Converge \[([^\]]+)\]:\s*(.*)$/.exec(h);
     if (m) {
       const sub = m[2].split(' ⊕ ')
         .map((s) => s.replace(/\(.*?\)/g, '').trim().split(/\s+/).slice(0, 4).join(' '))
         .join(' ⊕ ');
-      return { title: `融合 ${m[1].replace(/\s*\+\s*/g, ' ⊕ ')}`, sub };
+      return { title: t('mergedPrefix', m[1].replace(/\s*\+\s*/g, ' ⊕ ')), sub };
     }
     return { title: h || 'Baseline', sub: '' };
   }
@@ -964,7 +1233,7 @@
       <rect x="${rp.x}" y="${padT}" width="${Math.max(0, padL + plotW - rp.x)}" height="${Math.max(0, rp.y - padT)}" fill="var(--et-pass-bg)" opacity="0.65"/>
       <line x1="${rp.x}" y1="${padT}" x2="${rp.x}" y2="${padT + plotH}" stroke="var(--et-line-strong)" stroke-dasharray="2 3"/>
       <line x1="${padL}" y1="${rp.y}" x2="${padL + plotW}" y2="${rp.y}" stroke="var(--et-line-strong)" stroke-dasharray="2 3"/>
-      <text x="${padL + plotW - 6}" y="${padT + 13}" text-anchor="end" class="ax-note">优于基线</text>
+      <text x="${padL + plotW - 6}" y="${padT + 13}" text-anchor="end" class="ax-note">${esc(t('beatsBase'))}</text>
     ` : '';
 
     const frontPts = mapped.filter((p) => pFrontIds.includes(p.n.id)).sort((a, b) => a.gx - b.gx);
@@ -991,6 +1260,7 @@
       const hasConflict = (c) => (
         placed.some((q) => Math.abs(q.x - c.x) < 24 && Math.abs(q.y - c.y) < 11)
         || mapped.some((m) => m.n.id !== p.n.id && Math.abs(m.x - c.x) < 12 && Math.abs(m.y - c.y) < 9)
+        || Boolean(rp && !rp.pinned && c.y <= padT + 20 && c.x >= padL + plotW - 92)
       );
       const chosen = candidates.find((c) => fitsFrame(c) && !hasConflict(c))
         || candidates.find((c) => fitsFrame(c))
@@ -1006,7 +1276,7 @@
       const sx = x.toFixed(1), sy = y.toFixed(1);
       const lp = labelPos.get(n.id);
       const lx = lp.x.toFixed(1), ly = lp.y.toFixed(1);
-      const tip = `${n.id} · ${n.status}${p.pinned ? '（超出坐标范围，已贴边）' : ''}\n${objY.name} = ${fmtNum(n.metrics[objY.name])}\n${objX.name} = ${fmtNum(n.metrics[objX.name])}\n${hypoParts(n).title.slice(0, 60)}`;
+      const tip = `${n.id} · ${n.status}${p.pinned ? t('outOfRange') : ''}\n${objY.name} = ${fmtNum(n.metrics[objY.name])}\n${objX.name} = ${fmtNum(n.metrics[objX.name])}\n${hypoParts(n).title.slice(0, 60)}`;
       const ring = isSel ? `<circle cx="${sx}" cy="${sy}" r="8.5" fill="none" stroke="var(--et-primary)" stroke-width="1.5"/>` : '';
       const label = (fill, weight) => `<text x="${lx}" y="${ly}" text-anchor="${lp.anchor}" class="ax-label" font-weight="${weight}" fill="${fill}">${esc(n.id.replace('node-', '#'))}</text>`;
       let glyph;
@@ -1024,14 +1294,14 @@
       return `<g class="chart-pt" data-jump-node="${esc(n.id)}" data-tip="${esc(tip)}"><circle cx="${sx}" cy="${sy}" r="10" fill="transparent"/>${ring}${glyph}</g>`;
     }).join('');
 
-    const dir = (o) => (o.higher_is_better ? '越大越好' : '越小越好');
+    const dir = (o) => (o.higher_is_better ? t('higherBetter') : t('lowerBetter'));
     const xTitle = `${objX.name} · ${dir(objX)}${axX.useLog ? ' · log' : ''}  →`;
     const yTitle = `↑  ${objY.name} · ${dir(objY)}${axY.useLog ? ' · log' : ''}`;
     return `
       <div class="card">
         <div class="card-head">
-          <span class="card-title">多目标权衡</span>
-          <span class="card-note">越靠右上越优</span>
+          <span class="card-title">${esc(t('paretoTitle'))}</span>
+          <span class="card-note">${esc(t('paretoNote'))}</span>
         </div>
         <svg class="pareto-svg" viewBox="0 0 ${W} ${H}">
           <rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="var(--et-field)" rx="3"/>
@@ -1098,8 +1368,8 @@
     return `
       <div class="card">
         <div class="card-head">
-          <span class="card-title">最优值演进</span>
-          <span class="card-note">越靠上越优</span>
+          <span class="card-title">${esc(t('sparkTitle'))}</span>
+          <span class="card-note">${esc(t('sparkNote'))}</span>
         </div>
         <svg class="spark-svg" viewBox="0 0 ${W} ${H}">
           <rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="var(--et-field)" rx="3"/>
@@ -1286,9 +1556,10 @@
               <div class="rail-head">
                 <span class="node-id">${esc(n.id)}</span>
                 ${statusBadge(n, S.tree.best_node_id)}
+                ${n.revisits_node_id ? `<span class="revisit-pill">${esc(t('revisitTag', n.revisits_node_id))}</span>` : ''}
                 <span class="score-pill">${isMultiObj ? '' : fmtNum(n.primary_score)}</span>
                 ${vsBase && !vsBase.same ? `<span class="delta-tag ${vsBase.improved ? 'good' : 'bad'}">${esc(vsBase.text)}</span>` : ''}
-                <button type="button" class="multi-dot ${isMulti ? 'on' : ''}" data-multi-btn="${esc(n.id)}" title="多选节点用于对话融合 (或按住 Cmd/Shift 点击行)">${ICON_CHECK}</button>
+                <button type="button" class="multi-dot ${isMulti ? 'on' : ''}" data-multi-btn="${esc(n.id)}" title="${esc(t('multiBtnTitle'))}">${ICON_CHECK}</button>
               </div>
               <div class="rail-hypo">${esc(hp.title)}${hp.sub ? ` <span class="hypo-sub">· ${esc(hp.sub)}</span>` : ''}</div>
               ${renderMultiMetricChips(n)}
@@ -1501,9 +1772,10 @@
       insp.innerHTML = `
         <div class="card" style="margin-bottom:0;">
           <div class="card-head" style="margin-bottom:4px;">
-            <div style="display:flex;align-items:center;gap:6px;">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
               <strong style="font-family:var(--et-mono);font-size:12px;">${esc(selNode.id)}</strong>
               ${statusBadge(selNode, S.tree.best_node_id)}
+              ${selNode.revisits_node_id ? `<span class="revisit-pill">${esc(t('revisitTag', selNode.revisits_node_id))}</span>` : ''}
             </div>
             <span style="font-family:var(--et-mono);font-size:11px;">${fmtNum(selNode.primary_score)}</span>
           </div>
@@ -1604,7 +1876,7 @@
     $('diff-header').innerHTML = `
       <div class="diff-bar-row">
         <span class="select-filter diff-node-pick">
-          <select id="diff-node-sel" aria-label="选择节点">
+          <select id="diff-node-sel" aria-label="${esc(t('diffSelectNode'))}">
             ${ordered.map((n) => `<option value="${esc(n.id)}" ${n.id === curId ? 'selected' : ''}>${esc(`${n.id} · ${hypoParts(n).title.slice(0, 30)}`)}</option>`).join('')}
           </select>
         </span>
@@ -1617,11 +1889,11 @@
       </div>
       ${targets.length > 1 ? `
         <div class="diff-bar-row">
-          <span class="diff-vs">对比</span>
-          <div class="segmented" role="group" aria-label="对比基准">
-            ${targets.map((t) => `<button type="button" data-base="${esc(t.id)}" class="${activeBase === t.id ? 'on' : ''}">${t.role === 'baseline' ? '基线' : '父节点'} ${esc(t.id)}</button>`).join('')}
+          <span class="diff-vs">${esc(t('diffVs'))}</span>
+          <div class="segmented" role="group" aria-label="${esc(t('diffVs'))}">
+            ${targets.map((tInfo) => `<button type="button" data-base="${esc(tInfo.id)}" class="${activeBase === tInfo.id ? 'on' : ''}">${esc(tInfo.role === 'baseline' ? t('diffRoleBase') : t('diffRoleParent'))} ${esc(tInfo.id)}</button>`).join('')}
           </div>
-        </div>` : (d.fromLabel ? `<div class="diff-bar-row"><span class="diff-vs">对比 ${esc(d.fromLabel)}</span></div>` : '')}
+        </div>` : (d.fromLabel ? `<div class="diff-bar-row"><span class="diff-vs">${esc(t('diffVs'))} ${esc(d.fromLabel)}</span></div>` : '')}
     `;
 
     $('diff-node-sel')?.addEventListener('change', (e) => selectNode(e.target.value));
@@ -1638,25 +1910,25 @@
 
     if (d.prunedLegacyNoCommit) {
       pillsEl.innerHTML = '';
-      filesEl.innerHTML = `<div class="empty-box"><div class="empty-title">早期剪枝节点未存独立快照</div><p style="margin:4px 0 0;">${esc(d.pruneDigest)}</p></div>`;
+      filesEl.innerHTML = `<div class="empty-box"><div class="empty-title">${esc(t('diffLegacyPruned'))}</div><p style="margin:4px 0 0;">${esc(d.pruneDigest)}</p></div>`;
       return;
     }
 
     if (d.offline) {
       pillsEl.innerHTML = '';
-      filesEl.innerHTML = `<div class="empty-box"><div class="empty-title">远端连接已断开</div><p style="margin:4px 0 0;">当前为离线只读缓存模式，恢复远端连接后点击顶部「重试」即可加载代码变更。</p></div>`;
+      filesEl.innerHTML = `<div class="empty-box"><div class="empty-title">${esc(t('diffOfflineTitle'))}</div><p style="margin:4px 0 0;">${esc(t('diffOfflineDesc'))}</p></div>`;
       return;
     }
 
     const prunedBannerHtml = d.isPruned ? `
       <div class="pruned-banner ${isViolation(S.tree.nodes[curId]) ? 'violation' : ''}">
-        <strong>失败快照已保留</strong> · ${esc(humanizeAction(d.pruneDigest || '未达标'))}
+        <strong>${esc(t('diffPrunedSaved'))}</strong> · ${esc(humanizeAction(d.pruneDigest || t('diffPrunedDefault')))}
       </div>
     ` : '';
 
     if (!files.length) {
       pillsEl.innerHTML = '';
-      filesEl.innerHTML = prunedBannerHtml + `<div class="empty-box">该节点相对基准无文件差异</div>`;
+      filesEl.innerHTML = prunedBannerHtml + `<div class="empty-box">${esc(t('diffNoFiles'))}</div>`;
       return;
     }
 
@@ -1731,6 +2003,25 @@
     }
   }
 
+  function computeMadConfidence(ordered, root, best) {
+    if (typeof root?.primary_score !== 'number' || typeof best?.primary_score !== 'number') return null;
+    const vals = ordered
+      .filter((n) => typeof n.primary_score === 'number' && Number.isFinite(n.primary_score) && !isViolation(n))
+      .map((n) => n.primary_score);
+    if (vals.length < 3) return null;
+    const medianOf = (arr) => {
+      const s = [...arr].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid] : 0.5 * (s[mid - 1] + s[mid]);
+    };
+    const med = medianOf(vals);
+    const mad = medianOf(vals.map((v) => Math.abs(v - med)));
+    if (mad <= 1e-12) return null;
+    const ratio = Math.abs(best.primary_score - root.primary_score) / mad;
+    const cls = ratio >= 2.0 ? '' : (ratio >= 1.0 ? 'mid' : 'low');
+    return { ratio, cls };
+  }
+
   // ---------- Tab 3: Overview (Pareto Frontier / Trajectory & Step Stream) ----------
   function renderOverviewTab() {
     if (!S.initialized || !S.tree) return;
@@ -1776,38 +2067,40 @@
     const scored = ordered.filter((n) => typeof n.primary_score === 'number');
     const paretoPlotHtml = isMulti ? buildParetoPlot(ordered, objs, pFrontIds, root) : '';
     const chartHtml = (!isMulti && scored.length >= 2) ? buildSparkChart(scored, root, best, hib) : '';
+    const conf = computeMadConfidence(ordered, root, best);
 
     const experiments = ordered.filter((n) => n.id !== root?.id);
     const succ = experiments.filter((n) => n.status === 'VALIDATED' || n.status === 'CONVERGED').length;
     const violations = experiments.filter((n) => isViolation(n)).length;
     const summary = [
-      `${experiments.length} 个实验`,
-      `${succ} 成功`,
-      counts.prune ? `${counts.prune} 剪枝${violations ? `（${violations} 违反约束）` : ''}` : '',
-      counts.conv ? `${counts.conv} 融合` : '',
-      counts.run ? `${counts.run} 运行中` : '',
+      t('ovExp', experiments.length),
+      t('ovSucc', succ),
+      counts.prune ? t('ovPrune', counts.prune, violations) : '',
+      counts.conv ? t('ovConv', counts.conv) : '',
+      counts.run ? t('ovRun', counts.run) : '',
     ].filter(Boolean).join(' · ');
     const expTotal = Math.max(1, experiments.length);
     const succOnly = Math.max(0, succ - counts.conv);
 
     const frontRow = isMulti && pFrontIds.length ? `
-      <div class="kv-row"><span class="kv-key">领先</span><span class="kv-val">${pFrontIds.map((id) => `<button type="button" class="node-link ${S.selectedId === id ? 'on' : ''}" data-jump-node="${esc(id)}">${esc(id)}</button>`).join('<span class="kv-sep">·</span>')}</span></div>` : '';
+      <div class="kv-row"><span class="kv-key">${esc(t('ovLead'))}</span><span class="kv-val">${pFrontIds.map((id) => `<button type="button" class="node-link ${S.selectedId === id ? 'on' : ''}" data-jump-node="${esc(id)}">${esc(id)}</button>`).join('<span class="kv-sep">·</span>')}${conf ? `<span class="kv-sep">·</span><span class="conf-pill ${conf.cls}" title="${esc(t('ovConfTitle'))}">${esc(t('ovConf', conf.ratio))}</span>` : ''}</span></div>` : '';
     const consRow = cons.length ? `
-      <div class="kv-row"><span class="kv-key">约束</span><span class="kv-val mono">${esc(cons.map((c) => `${c.metric} ${opSym(c.op)} ${fmtNum(c.threshold)}`).join(' · '))}</span></div>` : '';
+      <div class="kv-row"><span class="kv-key">${esc(t('ovCons'))}</span><span class="kv-val mono">${esc(cons.map((c) => `${c.metric} ${opSym(c.op)} ${fmtNum(c.threshold)}`).join(' · '))}</span></div>` : '';
     const heroSingle = !isMulti ? `
       <div class="hero-kpi">
         <span class="hero-best">${fmtNum(best?.primary_score)}</span>
         <span class="hero-unit">${esc(S.tree.metric_name || '')}</span>
-        ${delta && !delta.same ? `<span class="hero-delta">${esc(delta.text)} vs 基线</span>` : ''}
+        ${delta && !delta.same ? `<span class="hero-delta">${esc(t('ovVsBase', delta.text))}</span>` : ''}
+        ${conf ? `<span class="conf-pill ${conf.cls}" title="${esc(t('ovConfTitle'))}">${esc(t('ovConf', conf.ratio))}</span>` : ''}
       </div>
-      ${best ? `<div class="kv-row"><span class="kv-key">最优</span><span class="kv-val"><button type="button" class="node-link" data-jump-node="${esc(best.id)}">${esc(best.id)}</button> ${esc(hypoParts(best).title)}</span></div>` : ''}
+      ${best ? `<div class="kv-row"><span class="kv-key">${esc(t('ovBest'))}</span><span class="kv-val"><button type="button" class="node-link" data-jump-node="${esc(best.id)}">${esc(best.id)}</button> ${esc(hypoParts(best).title)}</span></div>` : ''}
     ` : '';
     void maxGen; void totalVerifiedSteps; void total;
 
     el.innerHTML = `
       <div class="card">
         <div class="card-head">
-          <span class="card-title">进展</span>
+          <span class="card-title">${esc(t('ovProgress'))}</span>
           <span class="card-note">${esc(summary)}</span>
         </div>
         <div class="progress-bar">
@@ -1823,7 +2116,7 @@
       ${chartHtml}
 
       <div class="card">
-        <div class="card-head"><span class="card-title">动态</span></div>
+        <div class="card-head"><span class="card-title">${esc(t('ovFeed'))}</span></div>
         <div class="step-feed">
           ${stepEvents.length ? stepEvents.slice(0, 14).map((ev) => {
             const node = nodesMap[ev.nodeId];
@@ -1840,7 +2133,7 @@
                   <div class="step-msg">${esc(humanizeAction(ev.action))}</div>
                 </div>
               </div>`;
-          }).join('') : '<div class="empty-inline">暂无动态</div>'}
+          }).join('') : `<div class="empty-inline">${esc(t('ovNoFeed'))}</div>`}
         </div>
       </div>
     `;
@@ -1863,13 +2156,13 @@
     S.follow = !S.follow;
     $('btn-follow').classList.toggle('on', S.follow);
     $('btn-follow').setAttribute('aria-pressed', String(S.follow));
-    showToast(S.follow ? '已开启自动跟随本树最新节点' : '已暂停自动跟随');
+    showToast(S.follow ? t('toastFollowOn') : t('toastFollowOff'));
   });
 
   $('btn-refresh').addEventListener('click', async () => {
     await syncBinding(false);
     await pollState(true);
-    showToast('已同步最新状态');
+    showToast(t('toastSynced'));
   });
 
   $('btn-tree-menu')?.addEventListener('click', (e) => {
@@ -1898,7 +2191,7 @@
     await pollState(true);
     if (S.selectedId) await ensureNodeDiffCached(S.selectedId, S.diffFromId);
     renderAll();
-    showToast(S.offline ? '远端仍未就绪' : '已恢复远端连接');
+    showToast(S.offline ? t('toastStillOffline') : t('toastReconnected'));
   });
 
   $('btn-preview-bind')?.addEventListener('click', () => bindRepo(S.previewRepo));
@@ -1940,6 +2233,7 @@
   });
 
   setupMapPanZoom();
+  applyStaticI18n();
   $('mode-rail').classList.toggle('on', S.treeMode === 'rail');
   $('mode-map').classList.toggle('on', S.treeMode === 'map');
 

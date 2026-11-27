@@ -111,10 +111,11 @@ When running experiments on a remote Linux/GPU machine (`ssh <host>:/path`) whil
 **CLI (`exptree`, with compatibility symlink alias `etree`; or via MCP tools `etree_init`, `etree_brief`, `etree_branch`, `etree_eval`, `etree_converge`, `etree_recommend`):**
 - `exptree init -repo <DIR> -goal "<concise user-language goal>" -has-baseline=false`
 - `exptree up -repo <DIR> -goal "<concise user-language goal>" -objectives "m1:min,m2:max" -constraints "c1<=0.01" -eval-cmd "<cmd>" -serve=false` *(supports `-timeout 0`, `-detach`)*
-- `exptree branch -repo <DIR> -parent <node-id> -agent <name> -hypothesis "<concise user-language mechanism>" -worktree`
+- `exptree branch -repo <DIR> -parent <node-id> -agent <name> -hypothesis "<concise user-language mechanism>" -worktree` *(optional `-revisits <pruned-node-id>` when revisiting an invalidated discard)*
 - `exptree eval -repo <DIR> -node <node-id> -cmd "<cmd>" -rollback=true` *(default `-timeout 0`; add `-detach` for multi-hour background jobs)*
 - `exptree step -repo <DIR> -node <node-id> -msg "<progress>"` | `exptree record -repo <DIR> -node <node-id> -from-file <log>` *(or `-metrics "k=v"`)*
 - `exptree converge -repo <DIR> -parents node-2,node-3 -cmd "<cmd>"` *(or `-supervisor codex|opencode|pi|dsh`)*
+- `exptree finalize -repo <DIR> [-node <node-id>] [-branch exptree/winner]` *(creates reviewable branch + PR-ready diff summary)*
 - `exptree brief -repo <DIR>` | `exptree view -repo <DIR>` | `exptree recommend -repo <DIR>`
 - `exptree resume -repo <DIR>`
 - `exptree bind -repo <DIR>` | `exptree bind -remote http://127.0.0.1:17421 -ssh <host> -repo <remote-repo>` | `exptree bind -ssh <host> -repo <remote-repo>` | `exptree bind -unbind` | `exptree focus` *(uses `ETREE_SESSION_ID` / `ANTIGRAVITY_CONVERSATION_ID` / `CODEX_THREAD_ID`)*

@@ -41,15 +41,16 @@ type StepLog struct {
 
 // ExpNode 支持「单父分叉」与「多父合流（N-to-1 Convergence）」统一拓扑表示
 type ExpNode struct {
-	ID            string             `json:"id"`
-	ParentID      string             `json:"parent_id,omitempty"`      // 主父节点 ID（兼容单亲树遍历）
-	ParentIDs     []string           `json:"parent_ids,omitempty"`     // 完整父节点列表（当 len >= 2 时表示多节点合流为一个收敛节点！）
-	ChildrenIDs   []string           `json:"children_ids,omitempty"`
-	AgentID       string             `json:"agent_id"`
-	WorkerPID     int                `json:"worker_pid,omitempty"`
-	WorktreePath  string             `json:"worktree_path,omitempty"`
-	Hypothesis    string             `json:"hypothesis"`
-	SynthesisNote string             `json:"synthesis_note,omitempty"` // Supervisor Agent 记录的多分支冲突消解与语义融合说明
+	ID             string             `json:"id"`
+	ParentID       string             `json:"parent_id,omitempty"`       // 主父节点 ID（兼容单亲树遍历）
+	ParentIDs      []string           `json:"parent_ids,omitempty"`      // 完整父节点列表（当 len >= 2 时表示多节点合流为一个收敛节点！）
+	ChildrenIDs    []string           `json:"children_ids,omitempty"`
+	AgentID        string             `json:"agent_id"`
+	WorkerPID      int                `json:"worker_pid,omitempty"`
+	WorktreePath   string             `json:"worktree_path,omitempty"`
+	Hypothesis     string             `json:"hypothesis"`
+	RevisitsNodeID string             `json:"revisits_node_id,omitempty"` // 若某条先验失败分支因前置假设改变而被重审，记录所指向的旧节点 ID
+	SynthesisNote  string             `json:"synthesis_note,omitempty"`   // Supervisor Agent 记录的多分支冲突消解与语义融合说明
 	GitCommit     string             `json:"git_commit,omitempty"`
 	GitBranch     string             `json:"git_branch,omitempty"`
 	Status        NodeStatus         `json:"status"`
