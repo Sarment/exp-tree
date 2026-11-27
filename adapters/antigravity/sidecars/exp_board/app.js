@@ -75,8 +75,9 @@
       badgePass: 'Validated',
       badgeViolate: 'Constraint failed',
       badgePruned: 'Pruned',
-      badgeRun: 'Running',
+      badgePrep: 'Preparing',
       badgeQueue: 'Queued',
+      badgeRun: 'Evaluating',
       badgeSynth: 'Converging',
       axisY: 'Y',
       axisX: 'X',
@@ -191,8 +192,9 @@
       badgePass: '已晋升',
       badgeViolate: '违反约束',
       badgePruned: '已剪枝',
-      badgeRun: '运行中',
+      badgePrep: '准备中',
       badgeQueue: '排队中',
+      badgeRun: '评测中',
       badgeSynth: '融合中',
       axisY: '纵轴',
       axisX: '横轴',
@@ -445,14 +447,24 @@
     return Boolean(n) && n.status === 'PRUNED' && /HARD_CONSTRAINT_VIOLATED|CONSTRAINT_GATE_FAILED/.test(n.prune_digest || '');
   }
 
-  // Distinguish a queued branch waiting on eval.lock from the actively executing one.
-  function isQueuedNode(n) {
-    if (!n || n.status !== 'EXPLORING' || !Array.isArray(n.steps) || !n.steps.length) return false;
-    const live = [...n.steps].reverse().find((s) => /^(进度[:：]|PROGRESS)/i.test(s.action || ''));
-    const latest = live || n.steps[n.steps.length - 1];
-    const msg = String(latest?.action || '');
-    if (/已获得评测槽位|running eval/i.test(msg)) return false;
-    return /排队|queued/i.test(msg);
+  // Distinguish preparing (coding/compiling/smoke), queued (waiting eval.lock), and evaluating (running benchmark).
+  function activePhase(n) {
+    if (!n || n.status !== 'EXPLORING') return '';
+    if (n.phase === 'evaluating' || n.phase === 'queued' || n.phase === 'preparing') return n.phase;
+    const steps = Array.isArray(n.steps) ? n.steps : [];
+    if (!steps.length) return 'preparing';
+    const live = [...steps].reverse().find((s) => /^(进度[:：]|PROGRESS)/i.test(s.action || ''));
+    const latest = live || steps[steps.length - 1];
+    const latestMsg = String(latest?.action || '');
+    if (/排队|queued/i.test(latestMsg) && !/已获得评测槽位|running eval/i.test(latestMsg)) {
+      return 'queued';
+    }
+    const allActions = steps.map((s) => String(s.action || ''));
+    if (allActions.some((a) => /已提交后台评测作业|已获得评测槽位|正在运行评测|Smoke sanity gate passed/i.test(a))
+      || /\d+\s*\/\s*\d+|solved=|benchmark|running eval|已获得评测槽位/i.test(latestMsg)) {
+      return 'evaluating';
+    }
+    return 'preparing';
   }
 
   function statusBadge(n, bestId) {
@@ -467,10 +479,12 @@
         if (n.id === S.tree?.root_id) return `<span class="badge muted">${esc(t('badgeBase'))}</span>`;
         return `<span class="badge pass-soft">${esc(t('badgePass'))}</span>`;
       case 'PRUNED': return isViolation(n) ? `<span class="badge prune">${esc(t('badgeViolate'))}</span>` : `<span class="badge muted">${esc(t('badgePruned'))}</span>`;
-      case 'EXPLORING':
-        return isQueuedNode(n)
-          ? `<span class="badge queue">${esc(t('badgeQueue'))}</span>`
-          : `<span class="badge run live">${esc(t('badgeRun'))}</span>`;
+      case 'EXPLORING': {
+        const ph = activePhase(n);
+        if (ph === 'queued') return `<span class="badge queue">${esc(t('badgeQueue'))}</span>`;
+        if (ph === 'preparing') return `<span class="badge prep">${esc(t('badgePrep'))}</span>`;
+        return `<span class="badge run live">${esc(t('badgeRun'))}</span>`;
+      }
       case 'SYNTHESIZING': return `<span class="badge conv live">${esc(t('badgeSynth'))}</span>`;
       default: return `<span class="badge muted">${esc(n.status)}</span>`;
     }
@@ -1673,8 +1687,11 @@
       parts.push(`<circle cx="${nx}" cy="${midY}" r="4.5" fill="var(--et-card)" stroke="${pc}" stroke-width="1.6"/>`);
       parts.push(`<path d="M ${nx - 2} ${midY - 2} L ${nx + 2} ${midY + 2} M ${nx + 2} ${midY - 2} L ${nx - 2} ${midY + 2}" stroke="${pc}" stroke-width="1.4"/>`);
     } else if (st === 'EXPLORING' || st === 'SYNTHESIZING') {
-      if (isQueuedNode(row.node)) {
+      const ph = st === 'EXPLORING' ? activePhase(row.node) : 'evaluating';
+      if (ph === 'queued') {
         parts.push(`<circle cx="${nx}" cy="${midY}" r="4.5" fill="var(--et-card)" stroke="var(--et-queue)" stroke-width="1.8"/>`);
+      } else if (ph === 'preparing') {
+        parts.push(`<circle cx="${nx}" cy="${midY}" r="4.5" fill="var(--et-card)" stroke="var(--et-fg-muted)" stroke-width="1.6" stroke-dasharray="2.5 2"/>`);
       } else {
         parts.push(`<circle class="pulse-ring" cx="${nx}" cy="${midY}" r="8" fill="var(--et-run-bg)"/>`);
         parts.push(`<circle cx="${nx}" cy="${midY}" r="4.5" fill="var(--et-run)"/>`);
@@ -1909,9 +1926,10 @@
       const metricTitle = isMultiM && n.metrics
         ? objsM.map((o) => `${o.name}=${fmtNum(n.metrics[o.name])}`).join(', ')
         : `${S.tree.metric_name || 'score'}=${fmtNum(n.primary_score)}`;
-      const queuedCls = isQueuedNode(n) ? 'queued' : '';
+      const ph = activePhase(n);
+      const phaseCls = ph ? `phase-${ph}` : '';
       return `
-        <div class="map-card ${esc(n.status)} ${queuedCls} ${isViolation(n) ? 'violation' : ''} ${isSelected ? 'selected' : ''} ${isMulti ? 'multi-picked' : ''} ${faded ? 'faded' : ''}" data-map-id="${esc(n.id)}" style="left:${c.x}px;top:${c.y}px;">
+        <div class="map-card ${esc(n.status)} ${phaseCls} ${isViolation(n) ? 'violation' : ''} ${isSelected ? 'selected' : ''} ${isMulti ? 'multi-picked' : ''} ${faded ? 'faded' : ''}" data-map-id="${esc(n.id)}" style="left:${c.x}px;top:${c.y}px;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
             <strong style="font-family:var(--et-mono);font-size:11px;">${esc(n.id)}</strong>
             ${statusBadge(n, S.tree.best_node_id)}

@@ -253,6 +253,7 @@ button { cursor: pointer; }
 .badge.prune { background: var(--et-prune-bg); color: var(--et-prune); }
 .badge.run { background: var(--et-run-bg); color: var(--et-run); }
 .badge.queue { background: var(--et-queue-bg); color: var(--et-queue); }
+.badge.prep { background: var(--et-fill); color: var(--et-fg-muted); box-shadow: inset 0 0 0 1px var(--et-line-strong); }
 .badge.neutral { background: var(--et-fill); color: var(--et-fg-muted); }
 
 /* ------------------------------------------------------------------ */
@@ -407,7 +408,9 @@ button { cursor: pointer; }
 .map-card.PRUNED { border-left: 3.5px solid var(--et-fg-faint); }
 .map-card.PRUNED.violation { border-left-color: var(--et-prune); }
 .map-card.EXPLORING, .map-card.SYNTHESIZING { border-left: 3.5px solid var(--et-run); }
-.map-card.EXPLORING.queued { border-left: 3.5px solid var(--et-queue); }
+.map-card.EXPLORING.phase-preparing { border-left: 3.5px solid var(--et-fg-muted); }
+.map-card.EXPLORING.phase-queued { border-left: 3.5px solid var(--et-queue); }
+.map-card.EXPLORING.phase-evaluating { border-left: 3.5px solid var(--et-run); }
 .map-hypo {
   font-size: 11px; color: var(--et-fg-2); line-height: 1.28;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;

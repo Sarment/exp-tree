@@ -13,6 +13,12 @@ const (
 	NodePruned       NodeStatus = "PRUNED"       // 假设证伪、融合干扰退化或触发防作弊拦截，已剪枝回退
 )
 
+const (
+	PhasePreparing  = "preparing"  // Coding, compiling, or smoke-testing before heavy eval
+	PhaseQueued     = "queued"     // Waiting on repo-level eval.lock slot
+	PhaseEvaluating = "evaluating" // Actively executing the main benchmark command
+)
+
 // IsSuccess 判断节点是否处于已验证可用态（单分支晋升或多分支收敛成功均可作为后续父节点）
 func (s NodeStatus) IsSuccess() bool {
 	return s == NodeValidated || s == NodeConverged
@@ -54,6 +60,7 @@ type ExpNode struct {
 	GitCommit     string             `json:"git_commit,omitempty"`
 	GitBranch     string             `json:"git_branch,omitempty"`
 	Status        NodeStatus         `json:"status"`
+	Phase         string             `json:"phase,omitempty"`
 	PrimaryScore  *float64           `json:"primary_score,omitempty"`
 	Metrics       map[string]float64 `json:"metrics,omitempty"`
 	PruneDigest   string             `json:"prune_digest,omitempty"`

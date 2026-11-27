@@ -325,6 +325,9 @@ func TestSerialEvalQueueLock(t *testing.T) {
 		if results[i].Outcome != string(tree.NodeValidated) {
 			t.Fatalf("goroutine %d expected VALIDATED, got %+v", i, results[i])
 		}
+		if results[i].Node.Phase != "" {
+			t.Fatalf("goroutine %d expected cleared Phase on completion, got %q", i, results[i].Node.Phase)
+		}
 	}
 
 	rawOrder, err := os.ReadFile(orderFile)

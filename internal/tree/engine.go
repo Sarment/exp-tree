@@ -117,9 +117,11 @@ func (e *Engine) InitRoot(goal, metricName string, higherIsBetter bool, gitCommi
 
 	now := time.Now()
 	status := NodeValidated
+	phase := ""
 	var steps []StepLog
 	if baselineScore == nil {
 		status = NodeExploring
+		phase = PhasePreparing
 		steps = []StepLog{{
 			Index:     1,
 			Action:    "正在调研已知基线与构建离线评测…",
@@ -133,6 +135,7 @@ func (e *Engine) InitRoot(goal, metricName string, higherIsBetter bool, gitCommi
 		Hypothesis:   "Root Baseline",
 		GitCommit:    gitCommit,
 		Status:       status,
+		Phase:        phase,
 		PrimaryScore: baselineScore,
 		Visits:       1,
 		Steps:        steps,
@@ -343,8 +346,10 @@ func (e *Engine) Branch(in BranchInput) (*ExpNode, error) {
 	}
 
 	initialStatus := NodeExploring
+	initialPhase := PhasePreparing
 	if len(parents) >= 2 {
 		initialStatus = NodeSynthesizing
+		initialPhase = ""
 	}
 
 	child := &ExpNode{
@@ -359,6 +364,7 @@ func (e *Engine) Branch(in BranchInput) (*ExpNode, error) {
 		GitBranch:      in.GitBranch,
 		GitCommit:      commit,
 		Status:         initialStatus,
+		Phase:          initialPhase,
 		TotalSteps:     in.TotalSteps,
 		Visits:         1,
 		CreatedAt:      now,
@@ -397,6 +403,28 @@ func (e *Engine) RecordStep(nodeID, action string, verified bool) (*ExpNode, err
 	})
 	n.UpdatedAt = time.Now()
 	return copyNode(n), e.saveLocked()
+}
+
+// SetPhase updates the fine-grained lifecycle phase ("preparing" | "queued" | "evaluating" | "") of an active node.
+func (e *Engine) SetPhase(nodeID, phase string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	unlock := e.acquireFileLockReload()
+	defer unlock()
+
+	if nodeID == "" {
+		nodeID = e.state.ActiveNodeID
+	}
+	n, ok := e.state.Nodes[nodeID]
+	if !ok {
+		return ErrNodeNotFound
+	}
+	if n.Status != NodeExploring && phase != "" {
+		return nil
+	}
+	n.Phase = phase
+	n.UpdatedAt = time.Now()
+	return e.saveLocked()
 }
 
 // RecordProgress updates a node's live progress note in-place so multi-hour runs
@@ -464,6 +492,7 @@ func (e *Engine) Validate(nodeID string, primaryScore float64, metrics map[strin
 	}
 	n.WorkerPID = 0
 	n.PruneDigest = ""
+	n.Phase = ""
 	if n.IsConvergenceNode() {
 		n.Status = NodeConverged
 	} else {
@@ -503,6 +532,7 @@ func (e *Engine) PruneWithMetrics(nodeID, digest string, score *float64, metrics
 	}
 
 	n.Status = NodePruned
+	n.Phase = ""
 	n.WorkerPID = 0
 	n.PruneDigest = digest
 	if failedCommit != "" {

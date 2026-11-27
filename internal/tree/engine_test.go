@@ -141,3 +141,67 @@ func TestMaxInFlightBackpressure(t *testing.T) {
 		t.Fatalf("expected branch to succeed once in-flight dropped below cap, got %v", err)
 	}
 }
+
+func TestNodeActivePhaseLifecycle(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	eng, err := OpenEngine(stateFile)
+	if err != nil {
+		t.Fatalf("open engine: %v", err)
+	}
+
+	root, err := eng.InitRoot("Phase lifecycle test", "score", true, "sha-root", nil)
+	if err != nil {
+		t.Fatalf("init root: %v", err)
+	}
+	if root.Phase != PhasePreparing {
+		t.Fatalf("expected unmeasured root phase %q, got %q", PhasePreparing, root.Phase)
+	}
+	if _, err := eng.Validate("node-0", 10.0, map[string]float64{"score": 10.0}, "sha-root"); err != nil {
+		t.Fatal(err)
+	}
+
+	n1, err := eng.Branch(BranchInput{
+		ParentID:   "node-0",
+		AgentID:    "worker-1",
+		Hypothesis: "Test phase transitions",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n1.Phase != PhasePreparing {
+		t.Fatalf("expected new branch phase %q, got %q", PhasePreparing, n1.Phase)
+	}
+
+	if err := eng.SetPhase(n1.ID, PhaseQueued); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := eng.GetNode(n1.ID)
+	if got.Phase != PhaseQueued {
+		t.Fatalf("expected phase %q, got %q", PhaseQueued, got.Phase)
+	}
+
+	if err := eng.SetPhase(n1.ID, PhaseEvaluating); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = eng.GetNode(n1.ID)
+	if got.Phase != PhaseEvaluating {
+		t.Fatalf("expected phase %q, got %q", PhaseEvaluating, got.Phase)
+	}
+
+	val, err := eng.Validate(n1.ID, 20.0, map[string]float64{"score": 20.0}, "sha-n1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val.Phase != "" {
+		t.Fatalf("expected cleared phase on validated node, got %q", val.Phase)
+	}
+
+	n2, _ := eng.Branch(BranchInput{ParentID: "node-0", AgentID: "w2", Hypothesis: "Pruned clears phase"})
+	pruned, _, err := eng.Prune(n2.ID, "worse", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pruned.Phase != "" {
+		t.Fatalf("expected cleared phase on pruned node, got %q", pruned.Phase)
+	}
+}

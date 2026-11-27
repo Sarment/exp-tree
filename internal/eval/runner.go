@@ -190,6 +190,7 @@ func (r *Runner) Run(parentCtx context.Context, in RunInput) (*RunResult, error)
 	}
 
 	start := time.Now()
+	_ = r.engine.SetPhase(active.ID, tree.PhaseEvaluating)
 	cmd := exec.CommandContext(ctx, "sh", "-c", in.Command)
 	cmd.Env = evalEnv
 	if targetDir != "" {
@@ -418,6 +419,7 @@ func (r *Runner) acquireEvalSlot(ctx context.Context, nodeID string) (func(), er
 		return nil, err
 	}
 
+	_ = r.engine.SetPhase(nodeID, tree.PhaseQueued)
 	_, _ = r.engine.RecordProgress(nodeID, "排队等待评测槽位…")
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -430,6 +432,7 @@ func (r *Runner) acquireEvalSlot(ctx context.Context, nodeID string) (func(), er
 		case <-ticker.C:
 			err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 			if err == nil {
+				_ = r.engine.SetPhase(nodeID, tree.PhaseEvaluating)
 				_, _ = r.engine.RecordProgress(nodeID, "已获得评测槽位，开始评测…")
 				return unlock, nil
 			}
