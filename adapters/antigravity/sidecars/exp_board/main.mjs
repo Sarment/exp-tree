@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -14,7 +15,11 @@ const SCRATCH_ROOT = join(APP_DATA_DIR, 'scratch');
 const BRAIN_ROOT = join(APP_DATA_DIR, 'brain');
 const BINDINGS_DIR = join(SCRATCH_ROOT, '.exptree_bindings');
 const CACHE_DIR = join(SCRATCH_ROOT, '.exptree_cache');
+const DIFF_CACHE_DIR = join(CACHE_DIR, 'diffs');
 const SSH_SOCK_DIR = join(SCRATCH_ROOT, '.exptree_ssh');
+const IMMUTABLE_DIFF_MEM = new Map();
+const ACTIVE_DIFF_MEM = new Map();
+const ACTIVE_DIFF_TTL_MS = 15000;
 const CONV_RE = /^[a-zA-Z0-9_-]{6,80}$/;
 const SSH_HOST_RE = /^[a-zA-Z0-9._@:-]{1,128}$/;
 const SHA_RE = /^[0-9a-f]{4,40}$/i;
@@ -50,6 +55,63 @@ function shellQuote(s) {
 function cachePath(convId) {
   const clean = String(convId || '').trim();
   return isValidConvId(clean) ? join(CACHE_DIR, `${clean}.json`) : '';
+}
+
+function setBoundedMap(map, key, val, limit) {
+  if (map.has(key)) map.delete(key);
+  map.set(key, val);
+  if (map.size > limit) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+}
+
+function diffDiskPath(key) {
+  const h = createHash('sha1').update(String(key)).digest('hex');
+  return join(DIFF_CACHE_DIR, `${h}.json`);
+}
+
+function readImmutableDiffCache(key) {
+  if (IMMUTABLE_DIFF_MEM.has(key)) return IMMUTABLE_DIFF_MEM.get(key);
+  const p = diffDiskPath(key);
+  if (!existsSync(p)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(p, 'utf-8'));
+    if (parsed && Array.isArray(parsed.files)) {
+      setBoundedMap(IMMUTABLE_DIFF_MEM, key, parsed, 200);
+      return parsed;
+    }
+  } catch {
+    // ignore corrupt diff cache
+  }
+  return null;
+}
+
+function writeImmutableDiffCache(key, payload) {
+  setBoundedMap(IMMUTABLE_DIFF_MEM, key, payload, 200);
+  try {
+    mkdirSync(DIFF_CACHE_DIR, { recursive: true });
+    const p = diffDiskPath(key);
+    const tmp = `${p}.tmp.${process.pid}.${Date.now()}`;
+    writeFileSync(tmp, JSON.stringify(payload), 'utf-8');
+    renameSync(tmp, p);
+  } catch {
+    // ignore disk cache write failure
+  }
+}
+
+function readActiveDiffCache(key) {
+  const hit = ACTIVE_DIFF_MEM.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.ts >= ACTIVE_DIFF_TTL_MS) {
+    ACTIVE_DIFF_MEM.delete(key);
+    return null;
+  }
+  return hit.payload;
+}
+
+function writeActiveDiffCache(key, payload) {
+  setBoundedMap(ACTIVE_DIFF_MEM, key, { ts: Date.now(), payload }, 100);
 }
 
 function readCachedState(convId) {
@@ -748,6 +810,7 @@ app.api('/api/diff', async (data) => {
   const remoteBinding = resolveRemoteBinding(convId, data.repo);
   const toId = data.to || '';
   const fromOverride = data.from || '';
+  const forceRefresh = data.refresh === '1' || data.refresh === 'true';
 
   if (remoteBinding) {
     const remote = remoteBinding.remote;
@@ -763,9 +826,16 @@ app.api('/api/diff', async (data) => {
     }
 
     try {
-      const stateFile = `${remote.repo}/.git/exp-tree/state.json`;
-      const stateRaw = await sshExec(remote.ssh_host, `cat ${shellQuote(stateFile)}`, 4500);
-      const state = JSON.parse(stateRaw);
+      // Reuse cached state polled by /api/state to avoid a redundant SSH cat roundtrip
+      let state = !forceRefresh ? readCachedState(convId)?.state : null;
+      if (!state?.nodes?.[toId] || (fromOverride && !state.nodes?.[fromOverride])) {
+        const stateFile = `${remote.repo}/.git/exp-tree/state.json`;
+        const stateRaw = await sshExec(remote.ssh_host, `cat ${shellQuote(stateFile)}`, 4500);
+        state = JSON.parse(stateRaw);
+        if (state?.nodes && Object.keys(state.nodes).length > 0) {
+          writeCachedState(convId, state);
+        }
+      }
       const toNode = state.nodes?.[toId];
       if (!toNode) return { files: [], rawDiff: '', error: 'Node not found' };
 
@@ -775,20 +845,28 @@ app.api('/api/diff', async (data) => {
       const isPruned = toNode.status === 'PRUNED';
       const toSHA = String(toNode.git_commit || '').trim();
       const qRepo = shellQuote(remote.repo);
+      const toActive = toNode.status === 'EXPLORING' || toNode.status === 'SYNTHESIZING';
+      const fromActive = Boolean(parentNode && (parentNode.status === 'EXPLORING' || parentNode.status === 'SYNTHESIZING'));
 
       if (!parentNode) {
         if (!toSHA || !SHA_RE.test(toSHA)) {
           return { files: [], rawDiff: '', fromId: '', fromLabel: 'empty', toLabel: toNode.id, compareTargets };
         }
-        const rawDiff = await sshExec(remote.ssh_host, `git -C ${qRepo} show --format= --unified=3 ${toSHA}`, 5000);
-        return {
+        const rootKey = `ssh-root|${remote.ssh_host}|${remote.repo}|${toSHA}|${toNode.id}`;
+        if (!toActive && !forceRefresh) {
+          const hit = readImmutableDiffCache(rootKey);
+          if (hit) return { ...hit, compareTargets };
+        }
+        const rawDiff = await sshExec(remote.ssh_host, `git -C ${qRepo} show --format= --unified=3 ${toSHA}`, 6000);
+        const payload = {
           files: parseUnifiedDiff(rawDiff),
           rawDiff,
           fromId: '',
           fromLabel: 'Initial Snapshot',
           toLabel: `${toNode.id} (${toSHA.slice(0, 7)})`,
-          compareTargets,
         };
+        if (!toActive) writeImmutableDiffCache(rootKey, payload);
+        return { ...payload, compareTargets };
       }
 
       const fromSHA = String(parentNode.git_commit || '').trim();
@@ -810,36 +888,68 @@ app.api('/api/diff', async (data) => {
         return { files: [], rawDiff: '', isPruned, pruneDigest: toNode.prune_digest || '', error: 'Invalid git commit SHA', compareTargets };
       }
 
-      const isActive = toNode.status === 'EXPLORING' || toNode.status === 'SYNTHESIZING';
-      const wtPath = String(toNode.worktree_path || '').trim();
-      let rawDiff = '';
-      let toSuffix = (toSHA || 'working').slice(0, 7);
-
-      if (isActive && wtPath) {
-        const qWt = shellQuote(wtPath);
-        const fallbackCmd = (toSHA && toSHA !== fromSHA)
-          ? `git -C ${qRepo} diff --unified=3 ${fromSHA} ${toSHA}`
-          : 'true';
-        const gitCmd = `if [ -d ${qWt} ]; then git -C ${qWt} diff --unified=3 ${fromSHA}; else ${fallbackCmd}; fi`;
-        rawDiff = await sshExec(remote.ssh_host, gitCmd, 5000);
-        toSuffix = 'working';
-      } else if (isActive) {
-        rawDiff = await sshExec(remote.ssh_host, `git -C ${qRepo} diff --unified=3 ${fromSHA}`, 5000);
-        toSuffix = 'working';
-      } else if (toSHA && toSHA !== fromSHA) {
-        rawDiff = await sshExec(remote.ssh_host, `git -C ${qRepo} diff --unified=3 ${fromSHA} ${toSHA}`, 5000);
+      if (!toActive && !fromActive) {
+        const immKey = `ssh|${remote.ssh_host}|${remote.repo}|${fromSHA}|${toSHA}|${toNode.id}|${parentNode.id}|${isPruned ? 1 : 0}`;
+        if (!forceRefresh) {
+          const hit = readImmutableDiffCache(immKey);
+          if (hit) return { ...hit, compareTargets };
+        }
+        const rawDiff = (toSHA && toSHA !== fromSHA)
+          ? await sshExec(remote.ssh_host, `git -C ${qRepo} diff --unified=3 ${fromSHA} ${toSHA}`, 6000)
+          : '';
+        const payload = {
+          files: parseUnifiedDiff(rawDiff),
+          rawDiff,
+          isPruned,
+          pruneDigest: toNode.prune_digest || '',
+          fromId: parentNode.id,
+          fromLabel: `${parentNode.id} (${fromSHA.slice(0, 7)})`,
+          toLabel: `${toNode.id} (${toSHA.slice(0, 7)})`,
+        };
+        writeImmutableDiffCache(immKey, payload);
+        return { ...payload, compareTargets };
       }
 
-      return {
+      const activeKey = `ssh-active|${remote.ssh_host}|${remote.repo}|${parentNode.id}:${fromSHA}|${toNode.id}:${toSHA}`;
+      if (!forceRefresh) {
+        const hit = readActiveDiffCache(activeKey);
+        if (hit) return { ...hit, compareTargets };
+      }
+
+      const wtPath = String(toNode.worktree_path || '').trim();
+      const fromWt = String(parentNode.worktree_path || '').trim();
+      const fromResolve = (fromActive && fromWt)
+        ? `FROM_REF=$(if [ -d ${shellQuote(fromWt)} ]; then git -C ${shellQuote(fromWt)} rev-parse HEAD 2>/dev/null || echo ${fromSHA}; else echo ${fromSHA}; fi)`
+        : `FROM_REF=${fromSHA}`;
+
+      let diffCmd;
+      let toSuffix = (toSHA || 'working').slice(0, 7);
+      if (toActive && wtPath) {
+        const qWt = shellQuote(wtPath);
+        const fallbackCmd = (toSHA && toSHA !== fromSHA)
+          ? `git -C ${qRepo} diff --unified=3 "$FROM_REF" ${toSHA}`
+          : 'true';
+        diffCmd = `${fromResolve}; if [ -d ${qWt} ]; then git -C ${qWt} diff --unified=3 "$FROM_REF"; else ${fallbackCmd}; fi`;
+        toSuffix = 'working';
+      } else if (toActive) {
+        diffCmd = `${fromResolve}; git -C ${qRepo} diff --unified=3 "$FROM_REF"`;
+        toSuffix = 'working';
+      } else {
+        diffCmd = `${fromResolve}; if [ -n ${shellQuote(toSHA)} ] && [ "$FROM_REF" != ${shellQuote(toSHA)} ]; then git -C ${qRepo} diff --unified=3 "$FROM_REF" ${toSHA}; fi`;
+      }
+
+      const rawDiff = await sshExec(remote.ssh_host, diffCmd, 6000);
+      const payload = {
         files: parseUnifiedDiff(rawDiff),
         rawDiff,
         isPruned,
         pruneDigest: toNode.prune_digest || '',
         fromId: parentNode.id,
-        fromLabel: `${parentNode.id} (${fromSHA.slice(0, 7)})`,
+        fromLabel: `${parentNode.id} (${fromActive ? 'working' : fromSHA.slice(0, 7)})`,
         toLabel: `${toNode.id} (${toSuffix})`,
-        compareTargets,
       };
+      writeActiveDiffCache(activeKey, payload);
+      return { ...payload, compareTargets };
     } catch (err) {
       return { files: [], rawDiff: '', offline: true, error: String(err?.message || err) };
     }
@@ -897,29 +1007,48 @@ app.api('/api/diff', async (data) => {
   }
 
   const isActive = toNode.status === 'EXPLORING' || toNode.status === 'SYNTHESIZING';
+  const fromActive = parentNode.status === 'EXPLORING' || parentNode.status === 'SYNTHESIZING';
   const hasWorktree = Boolean(toNode.worktree_path && existsSync(toNode.worktree_path));
+  let fromRef = parentNode.git_commit || '';
+  if (fromActive && parentNode.worktree_path && existsSync(parentNode.worktree_path)) {
+    try {
+      const head = execFileSync('git', ['-C', parentNode.worktree_path, 'rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
+      if (head) fromRef = head;
+    } catch { /* fallback to git_commit */ }
+  }
+
+  if (!isActive && !fromActive && !forceRefresh) {
+    const localKey = `local|${repo}|${fromRef}|${toNode.git_commit || ''}|${toNode.id}|${parentNode.id}|${isPruned ? 1 : 0}`;
+    const hit = readImmutableDiffCache(localKey);
+    if (hit) return { ...hit, compareTargets };
+  }
+
   try {
     let rawDiff = '';
     let toSuffix = (toNode.git_commit || 'working').slice(0, 7);
     if (isActive && hasWorktree) {
-      rawDiff = execFileSync('git', ['-C', toNode.worktree_path, 'diff', '--unified=3', parentNode.git_commit], { encoding: 'utf-8', maxBuffer: 4 * 1024 * 1024 });
+      rawDiff = execFileSync('git', ['-C', toNode.worktree_path, 'diff', '--unified=3', fromRef], { encoding: 'utf-8', maxBuffer: 4 * 1024 * 1024 });
       toSuffix = 'working';
     } else if (isActive) {
-      rawDiff = execFileSync('git', ['-C', repo, 'diff', '--unified=3', parentNode.git_commit], { encoding: 'utf-8', maxBuffer: 4 * 1024 * 1024 });
+      rawDiff = execFileSync('git', ['-C', repo, 'diff', '--unified=3', fromRef], { encoding: 'utf-8', maxBuffer: 4 * 1024 * 1024 });
       toSuffix = 'working';
-    } else if (toNode.git_commit && toNode.git_commit !== parentNode.git_commit) {
-      rawDiff = execFileSync('git', ['-C', repo, 'diff', '--unified=3', parentNode.git_commit, toNode.git_commit], { encoding: 'utf-8', maxBuffer: 4 * 1024 * 1024 });
+    } else if (toNode.git_commit && toNode.git_commit !== fromRef) {
+      rawDiff = execFileSync('git', ['-C', repo, 'diff', '--unified=3', fromRef, toNode.git_commit], { encoding: 'utf-8', maxBuffer: 4 * 1024 * 1024 });
     }
-    return {
+    const payload = {
       files: parseUnifiedDiff(rawDiff),
       rawDiff,
       isPruned,
       pruneDigest: toNode.prune_digest || '',
       fromId: parentNode.id,
-      fromLabel: `${parentNode.id} (${(parentNode.git_commit || '').slice(0, 7)})`,
+      fromLabel: `${parentNode.id} (${fromActive ? 'working' : (parentNode.git_commit || '').slice(0, 7)})`,
       toLabel: `${toNode.id} (${toSuffix})`,
-      compareTargets,
     };
+    if (!isActive && !fromActive) {
+      const localKey = `local|${repo}|${fromRef}|${toNode.git_commit || ''}|${toNode.id}|${parentNode.id}|${isPruned ? 1 : 0}`;
+      writeImmutableDiffCache(localKey, payload);
+    }
+    return { ...payload, compareTargets };
   } catch (err) {
     return { files: [], rawDiff: '', isPruned, pruneDigest: toNode.prune_digest || '', error: String(err.message || err), compareTargets };
   }

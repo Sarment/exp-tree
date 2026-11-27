@@ -110,6 +110,14 @@
       diffPrunedSaved: 'Preserved failure snapshot',
       diffPrunedDefault: 'Below baseline',
       diffNoFiles: 'No file differences against selected baseline',
+      diffLoading: 'Loading diff…',
+      diffChangesOnly: 'Changes only',
+      diffCollapseAll: 'Collapse all',
+      diffExpandAll: 'Expand all',
+      diffRefreshTitle: 'Refresh diff',
+      diffMoreBase: 'Other node…',
+      diffFilesSummary: (n) => `${n} ${n === 1 ? 'file' : 'files'} changed`,
+      diffNoChangesHunk: 'No added/removed lines',
       ovProgress: 'Progress',
       ovLead: 'Leading',
       ovCons: 'Gates',
@@ -227,6 +235,14 @@
       diffPrunedSaved: '失败快照已保留',
       diffPrunedDefault: '未达标',
       diffNoFiles: '该节点相对基准无文件差异',
+      diffLoading: '正在加载代码变更…',
+      diffChangesOnly: '只看改动行',
+      diffCollapseAll: '全部折叠',
+      diffExpandAll: '全部展开',
+      diffRefreshTitle: '重新计算差异',
+      diffMoreBase: '其他节点…',
+      diffFilesSummary: (n) => `共改动 ${n} 个文件`,
+      diffNoChangesHunk: '无增删改动行',
       ovProgress: '进展',
       ovLead: '领先',
       ovCons: '约束',
@@ -320,7 +336,12 @@
     deepLinkedNode: urlParams.get('node') || '',
     multiSet: new Set(),
     diffFromId: '',
-    diffCache: new Map(), // key: `${repo}|${nodeId}|${commit}|${fromId}` -> diff response
+    diffCache: new Map(), // key -> diff response
+    diffInFlight: new Map(), // key -> promise
+    diffLoadingKey: '',
+    diffChangesOnly: false,
+    diffAutoCollapsedKey: '',
+    diffSummaryOpen: true,
     pendingScrollFileIdx: null,
     collapsedFiles: new Set(),
     mapZoom: 1,
@@ -649,26 +670,35 @@
     const n = S.tree?.nodes?.[nodeId];
     const effectiveFrom = fromId || parentsOf(n)[0] || '';
     const fromNode = effectiveFrom ? S.tree?.nodes?.[effectiveFrom] : null;
-    const isActive = n?.status === 'EXPLORING' || n?.status === 'SYNTHESIZING';
-    const activeVer = isActive ? (n?.updated_at || '') : '';
-    return `${S.targetKey || S.repo}|${nodeId}|${n?.git_commit || ''}|${activeVer}|${fromId}|${fromNode?.git_commit || ''}`;
+    return `${S.targetKey || S.repo}|${nodeId}|${n?.status || ''}|${n?.git_commit || ''}|${fromId}|${fromNode?.status || ''}|${fromNode?.git_commit || ''}`;
   }
 
-  async function ensureNodeDiffCached(nodeId, fromId = '') {
+  async function ensureNodeDiffCached(nodeId, fromId = '', { force = false } = {}) {
     if (!S.repo || !nodeId) return null;
     const cacheKey = diffCacheKey(nodeId, fromId);
-    if (S.diffCache.has(cacheKey)) return S.diffCache.get(cacheKey);
-    try {
-      const convParam = S.conv ? `&conversationId=${encodeURIComponent(S.conv)}` : '';
-      const url = `/api/diff?repo=${encodeURIComponent(S.repo)}&to=${encodeURIComponent(nodeId)}&from=${encodeURIComponent(fromId)}${convParam}`;
-      const res = await apiGet(url);
-      if (!res?.offline) {
-        S.diffCache.set(cacheKey, res);
-      }
-      return res;
-    } catch {
-      return null;
-    }
+    if (!force && S.diffCache.has(cacheKey)) return S.diffCache.get(cacheKey);
+    if (!force && S.diffInFlight.has(cacheKey)) return S.diffInFlight.get(cacheKey);
+
+    S.diffLoadingKey = cacheKey;
+    if (S.tab === 'changes') renderChangesTab();
+
+    const convParam = S.conv ? `&conversationId=${encodeURIComponent(S.conv)}` : '';
+    const refreshParam = force ? '&refresh=1' : '';
+    const url = `/api/diff?repo=${encodeURIComponent(S.repo)}&to=${encodeURIComponent(nodeId)}&from=${encodeURIComponent(fromId)}${convParam}${refreshParam}`;
+    const p = apiGet(url)
+      .then((res) => {
+        if (!res?.offline) {
+          S.diffCache.set(cacheKey, res);
+        }
+        return res;
+      })
+      .catch(() => null)
+      .finally(() => {
+        S.diffInFlight.delete(cacheKey);
+        if (S.diffLoadingKey === cacheKey) S.diffLoadingKey = '';
+      });
+    S.diffInFlight.set(cacheKey, p);
+    return p;
   }
 
   function getCachedDiff(nodeId, fromId = '') {
@@ -710,6 +740,9 @@
     S.multiSet.clear();
     S.diffFromId = '';
     S.diffCache.clear();
+    S.diffInFlight.clear();
+    S.diffLoadingKey = '';
+    S.diffAutoCollapsedKey = '';
     S.pendingScrollFileIdx = null;
     S.collapsedFiles.clear();
     S.mapFitPending = true;
@@ -2071,35 +2104,82 @@
     const nodesMap = S.tree.nodes || {};
     const ordered = Object.values(nodesMap).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     const curId = S.selectedId || S.tree.best_node_id || S.tree.root_id;
-    const d = getCachedDiff(curId, S.diffFromId) || { files: [], compareTargets: [] };
+    const curNode = nodesMap[curId];
+    const cacheKey = diffCacheKey(curId, S.diffFromId);
+    const cached = getCachedDiff(curId, S.diffFromId);
+    const isLoading = !cached && S.diffLoadingKey === cacheKey;
+    const d = cached || { files: [], compareTargets: [] };
     const files = d.files || [];
     const totalAdd = files.reduce((acc, f) => acc + f.additions, 0);
     const totalDel = files.reduce((acc, f) => acc + f.deletions, 0);
     setChangesCount(files);
 
+    // Auto-collapse extra files when diff is large so opening the tab stays instant.
+    if (cached && files.length > 0 && cacheKey !== S.diffAutoCollapsedKey) {
+      S.diffAutoCollapsedKey = cacheKey;
+      if (files.length > 3 || (totalAdd + totalDel) > 300) {
+        const keepIdx = S.pendingScrollFileIdx !== null ? S.pendingScrollFileIdx : 0;
+        S.collapsedFiles.clear();
+        files.forEach((f, idx) => {
+          if (idx !== keepIdx && idx !== 0) S.collapsedFiles.add(f.path);
+        });
+      }
+    }
+    if (S.pendingScrollFileIdx !== null && files[S.pendingScrollFileIdx]) {
+      S.collapsedFiles.delete(files[S.pendingScrollFileIdx].path);
+    }
+
     const targets = d.compareTargets || [];
-    const activeBase = d.fromId || '';
+    const activeBase = d.fromId || S.diffFromId || '';
+    const targetIds = new Set(targets.map((ti) => ti.id));
+    const otherNodes = ordered.filter((n) => n.id !== curId && !targetIds.has(n.id));
+
+    const objsC = S.tree.objectives || [];
+    const curScoreStr = curNode
+      ? ((objsC.length >= 2 && curNode.metrics)
+        ? objsC.slice(0, 3).map((o) => (typeof curNode.metrics[o.name] === 'number' ? `${o.name} ${fmtNum(curNode.metrics[o.name])}` : '')).filter(Boolean).join(' · ')
+        : (typeof curNode.primary_score === 'number' ? `${S.tree.metric_name || 'score'} ${fmtNum(curNode.primary_score)}` : ''))
+      : '';
+
+    const allCollapsed = files.length > 1 && files.every((f) => S.collapsedFiles.has(f.path));
+
     $('diff-header').innerHTML = `
       <div class="diff-bar-row">
         <span class="select-filter diff-node-pick">
           <select id="diff-node-sel" aria-label="${esc(t('diffSelectNode'))}">
-            ${ordered.map((n) => `<option value="${esc(n.id)}" ${n.id === curId ? 'selected' : ''}>${esc(`${n.id} · ${hypoParts(n).title.slice(0, 30)}`)}</option>`).join('')}
+            ${ordered.map((n) => `<option value="${esc(n.id)}" ${n.id === curId ? 'selected' : ''}>${esc(`${n.id} · ${hypoParts(n).title.slice(0, 28)}`)}</option>`).join('')}
           </select>
         </span>
-        <span class="spacer"></span>
+        ${curNode ? statusBadge(curNode, S.tree.best_node_id) : ''}
         <span class="diffstat">
           <span class="add">+${totalAdd}</span>
           <span class="del">−${totalDel}</span>
           ${renderDiffSquares(totalAdd, totalDel)}
         </span>
       </div>
-      ${targets.length > 1 ? `
-        <div class="diff-bar-row">
-          <span class="diff-vs">${esc(t('diffVs'))}</span>
-          <div class="segmented" role="group" aria-label="${esc(t('diffVs'))}">
+      ${curNode ? `
+        <div class="diff-node-ctx" title="${esc(hypoParts(curNode).title)}">
+          <span class="diff-ctx-hypo">${esc(hypoParts(curNode).title)}</span>
+          ${curScoreStr ? `<span class="diff-ctx-score">${esc(curScoreStr)}</span>` : ''}
+        </div>` : ''}
+      <div class="diff-bar-row diff-ctrl-row">
+        <span class="diff-vs">${esc(t('diffVs'))}</span>
+        ${targets.length ? `
+          <div class="segmented xs" role="group" aria-label="${esc(t('diffVs'))}">
             ${targets.map((tInfo) => `<button type="button" data-base="${esc(tInfo.id)}" class="${activeBase === tInfo.id ? 'on' : ''}">${esc(tInfo.role === 'baseline' ? t('diffRoleBase') : t('diffRoleParent'))} ${esc(tInfo.id)}</button>`).join('')}
-          </div>
-        </div>` : (d.fromLabel ? `<div class="diff-bar-row"><span class="diff-vs">${esc(t('diffVs'))} ${esc(d.fromLabel)}</span></div>` : '')}
+          </div>` : (d.fromLabel ? `<span class="diff-vs">${esc(d.fromLabel)}</span>` : '')}
+        ${otherNodes.length ? `
+          <select id="diff-base-more" class="diff-base-select" aria-label="${esc(t('diffMoreBase'))}">
+            <option value="" ${!otherNodes.some((n) => n.id === activeBase) ? 'selected' : ''}>${esc(t('diffMoreBase'))}</option>
+            ${otherNodes.map((n) => `<option value="${esc(n.id)}" ${activeBase === n.id ? 'selected' : ''}>${esc(n.id)}</option>`).join('')}
+          </select>` : ''}
+        <span class="spacer"></span>
+        <button type="button" id="btn-changes-only" class="ctrl-pill ${S.diffChangesOnly ? 'on' : ''}">${esc(t('diffChangesOnly'))}</button>
+        ${files.length > 1 ? `<button type="button" id="btn-toggle-all-files" class="ctrl-pill">${esc(allCollapsed ? t('diffExpandAll') : t('diffCollapseAll'))}</button>` : ''}
+        <button type="button" id="btn-refresh-diff" class="icon-btn xs" title="${esc(t('diffRefreshTitle'))}" aria-label="${esc(t('diffRefreshTitle'))}">
+          <svg class="icon" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.35-3.6"/><path d="M13.5 2.5v2.3h-2.3"/></svg>
+        </button>
+      </div>
     `;
 
     $('diff-node-sel')?.addEventListener('change', (e) => selectNode(e.target.value));
@@ -2110,9 +2190,38 @@
         renderChangesTab();
       });
     });
+    $('diff-base-more')?.addEventListener('change', async (e) => {
+      const val = e.target.value;
+      if (!val) return;
+      S.diffFromId = val;
+      await ensureNodeDiffCached(curId, S.diffFromId);
+      renderChangesTab();
+    });
+    $('btn-changes-only')?.addEventListener('click', () => {
+      S.diffChangesOnly = !S.diffChangesOnly;
+      renderChangesTab();
+    });
+    $('btn-toggle-all-files')?.addEventListener('click', () => {
+      if (allCollapsed) {
+        S.collapsedFiles.clear();
+      } else {
+        files.forEach((f) => S.collapsedFiles.add(f.path));
+      }
+      renderChangesTab();
+    });
+    $('btn-refresh-diff')?.addEventListener('click', async () => {
+      await ensureNodeDiffCached(curId, S.diffFromId, { force: true });
+      renderChangesTab();
+    });
 
     const pillsEl = $('diff-file-pills');
     const filesEl = $('diff-files-container');
+
+    if (isLoading) {
+      pillsEl.innerHTML = '';
+      filesEl.innerHTML = `<div class="empty-box diff-loading"><span class="diff-spinner" aria-hidden="true"></span><span>${esc(t('diffLoading'))}</span></div>`;
+      return;
+    }
 
     if (d.prunedLegacyNoCommit) {
       pillsEl.innerHTML = '';
@@ -2138,41 +2247,111 @@
       return;
     }
 
-    pillsEl.innerHTML = files.length > 1 ? files.map((f, idx) => {
-      const base = f.path.split('/').pop();
-      return `<button type="button" class="file-pill" data-scroll-file="diff-f-${idx}">
-        <span>${esc(base)}</span>
-        <span style="color:var(--et-pass)">+${f.additions}</span>
-        <span style="color:var(--et-prune)">−${f.deletions}</span>
-      </button>`;
-    }).join('') : '';
+    if (files.length > 1) {
+      pillsEl.innerHTML = `
+        <div class="file-summary-card ${S.diffSummaryOpen ? '' : 'collapsed'}">
+          <button type="button" class="file-sum-head" id="btn-toggle-file-summary">
+            <span class="diff-chev">▾</span>
+            <span>${esc(t('diffFilesSummary', files.length))}</span>
+            <span class="spacer"></span>
+            <span class="diffstat"><span class="add">+${totalAdd}</span><span class="del">−${totalDel}</span></span>
+          </button>
+          ${S.diffSummaryOpen ? `
+            <div class="file-sum-list">
+              ${files.map((f, idx) => {
+                const slash = f.path.lastIndexOf('/');
+                const dir = slash >= 0 ? f.path.slice(0, slash + 1) : '';
+                const name = slash >= 0 ? f.path.slice(slash + 1) : f.path;
+                return `<button type="button" class="file-sum-row" data-jump-file-idx="${idx}" title="${esc(f.path)}">
+                  <span class="file-sum-name">${esc(name)}</span>
+                  ${dir ? `<span class="file-sum-dir">${esc(dir)}</span>` : ''}
+                  <span class="spacer"></span>
+                  <span class="diffstat"><span class="add">+${f.additions}</span><span class="del">−${f.deletions}</span></span>
+                </button>`;
+              }).join('')}
+            </div>` : ''}
+        </div>`;
 
-    pillsEl.querySelectorAll('[data-scroll-file]').forEach((b) => {
-      b.addEventListener('click', () => {
-        document.getElementById(b.dataset.scrollFile)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      $('btn-toggle-file-summary')?.addEventListener('click', () => {
+        S.diffSummaryOpen = !S.diffSummaryOpen;
+        renderChangesTab();
       });
-    });
+      pillsEl.querySelectorAll('[data-jump-file-idx]').forEach((b) => {
+        b.addEventListener('click', () => {
+          const idx = Number(b.dataset.jumpFileIdx);
+          const f = files[idx];
+          if (f && S.collapsedFiles.has(f.path)) {
+            S.collapsedFiles.delete(f.path);
+            S.pendingScrollFileIdx = idx;
+            renderChangesTab();
+            return;
+          }
+          document.getElementById(`diff-f-${idx}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      });
+    } else {
+      pillsEl.innerHTML = '';
+    }
 
     filesEl.innerHTML = prunedBannerHtml + files.map((f, idx) => {
       const fid = `diff-f-${idx}`;
       const isCol = S.collapsedFiles.has(f.path);
-      const rowsHtml = f.hunks.map((h) => {
-        const hunkRow = `<tr class="diff-hunk"><td colspan="4">${esc(h.header)}</td></tr>`;
-        const codeRows = annotateWordDiff(h.lines).map((ln) => {
-          if (ln.type === 'meta') {
-            return `<tr><td class="ln"></td><td class="ln"></td><td class="sign">\\</td><td class="code-cell" style="color:var(--et-fg-muted)">${esc(ln.content)}</td></tr>`;
+      let rowsHtml = '';
+      if (!isCol) {
+        rowsHtml = f.hunks.map((h) => {
+          const atIdx = h.header.indexOf(' @@');
+          const rangePart = atIdx >= 0 ? h.header.slice(0, atIdx + 3) : h.header;
+          const ctxText = h.context || (atIdx >= 0 ? h.header.slice(atIdx + 3).trim() : '');
+          const hunkRow = `<tr class="diff-hunk"><td colspan="4"><span class="hunk-range">${esc(rangePart)}</span>${ctxText ? `<span class="hunk-ctx">${esc(ctxText)}</span>` : ''}</td></tr>`;
+
+          const annotated = annotateWordDiff(h.lines);
+          let codeRows = '';
+          if (S.diffChangesOnly) {
+            const parts = [];
+            let skippedCtx = false;
+            let hasChanged = false;
+            for (const ln of annotated) {
+              if (ln.type === 'ctx') {
+                if (hasChanged) skippedCtx = true;
+                continue;
+              }
+              if (skippedCtx) {
+                parts.push('<tr class="diff-elide"><td colspan="4">···</td></tr>');
+                skippedCtx = false;
+              }
+              hasChanged = true;
+              if (ln.type === 'meta') {
+                parts.push(`<tr><td class="ln"></td><td class="ln"></td><td class="sign">\\</td><td class="code-cell" style="color:var(--et-fg-muted)">${esc(ln.content)}</td></tr>`);
+              } else {
+                const cls = ln.type === 'add' ? 'line-add' : 'line-del';
+                const sign = ln.type === 'add' ? '+' : '-';
+                parts.push(`<tr class="${cls}">
+                  <td class="ln">${ln.oldNo ?? ''}</td>
+                  <td class="ln">${ln.newNo ?? ''}</td>
+                  <td class="sign">${sign}</td>
+                  <td class="code-cell">${ln.html ?? esc(ln.content)}</td>
+                </tr>`);
+              }
+            }
+            codeRows = parts.length ? parts.join('') : `<tr class="diff-elide"><td colspan="4">${esc(t('diffNoChangesHunk'))}</td></tr>`;
+          } else {
+            codeRows = annotated.map((ln) => {
+              if (ln.type === 'meta') {
+                return `<tr><td class="ln"></td><td class="ln"></td><td class="sign">\\</td><td class="code-cell" style="color:var(--et-fg-muted)">${esc(ln.content)}</td></tr>`;
+              }
+              const cls = ln.type === 'add' ? 'line-add' : (ln.type === 'del' ? 'line-del' : '');
+              const sign = ln.type === 'add' ? '+' : (ln.type === 'del' ? '-' : ' ');
+              return `<tr class="${cls}">
+                <td class="ln">${ln.oldNo ?? ''}</td>
+                <td class="ln">${ln.newNo ?? ''}</td>
+                <td class="sign">${sign}</td>
+                <td class="code-cell">${ln.html ?? esc(ln.content)}</td>
+              </tr>`;
+            }).join('');
           }
-          const cls = ln.type === 'add' ? 'line-add' : (ln.type === 'del' ? 'line-del' : '');
-          const sign = ln.type === 'add' ? '+' : (ln.type === 'del' ? '-' : ' ');
-          return `<tr class="${cls}">
-            <td class="ln">${ln.oldNo ?? ''}</td>
-            <td class="ln">${ln.newNo ?? ''}</td>
-            <td class="sign">${sign}</td>
-            <td class="code-cell">${ln.html ?? esc(ln.content)}</td>
-          </tr>`;
+          return hunkRow + codeRows;
         }).join('');
-        return hunkRow + codeRows;
-      }).join('');
+      }
 
       return `
         <div id="${fid}" class="diff-file ${isCol ? 'collapsed' : ''}">
@@ -2185,7 +2364,7 @@
             </span>
           </div>
           <div class="diff-file-body">
-            <table class="diff-table"><tbody>${rowsHtml}</tbody></table>
+            ${isCol ? '' : `<table class="diff-table"><tbody>${rowsHtml}</tbody></table>`}
           </div>
         </div>
       `;
