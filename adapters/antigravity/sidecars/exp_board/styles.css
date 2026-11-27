@@ -53,6 +53,15 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
+  --et-bg: var(--background, #0d1117);
+  --et-card: var(--card, #161b22);
+  --et-fg: var(--foreground, #e6edf3);
+  --et-fg-2: var(--secondary-foreground, #c9d1d9);
+  --et-fg-muted: var(--muted-foreground, #8b949e);
+  --et-fg-faint: var(--placeholder, #6e7681);
+  --et-primary: var(--primary, #2f81f7);
+  --et-primary-fg: var(--primary-foreground, #ffffff);
+
   --et-pass: #3fb950;
   --et-pass-bg: rgba(63, 185, 80, 0.15);
   --et-conv: #a371f7;
@@ -513,8 +522,8 @@ tr.line-del .sign, tr.line-del .code-cell { color: var(--diff-del-fg); }
 .stat-val { font-family: var(--et-mono); font-size: var(--text-sm); font-weight: 600; color: var(--et-fg); }
 .stat-lbl { font-size: 10px; color: var(--et-fg-muted); }
 
-.spark-svg { width: 100%; height: auto; display: block; overflow: visible; }
-.pareto-svg { width: 100%; height: auto; display: block; overflow: visible; }
+.spark-svg { width: 100%; max-width: 520px; max-height: 156px; height: auto; display: block; margin: 0 auto; overflow: visible; }
+.pareto-svg { width: 100%; max-width: 520px; max-height: 240px; height: auto; display: block; margin: 0 auto; overflow: visible; }
 
 .metric-strip { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .metric-chip {
@@ -726,10 +735,10 @@ tr.line-del .wd { background: color-mix(in srgb, var(--diff-del-fg) 24%, transpa
 .empty-inline { color: var(--et-fg-muted); font-size: 12px; }
 
 /* Chart text */
-.ax-tick { font-size: 10px; font-family: var(--et-mono); fill: var(--et-fg-faint); }
-.ax-title { font-size: 10px; font-family: var(--et-font); fill: var(--et-fg-muted); }
-.ax-note { font-size: 10px; font-family: var(--et-font); fill: var(--et-pass); }
-.ax-label { font-size: 10px; font-family: var(--et-mono); }
+.ax-tick { font-size: 10.5px; font-family: var(--et-mono); fill: var(--et-fg-faint); }
+.ax-title { font-size: 10.5px; font-family: var(--et-font); fill: var(--et-fg-muted); }
+.ax-note { font-size: 10px; font-family: var(--et-font); fill: var(--et-pass); opacity: 0.88; }
+.ax-label { font-size: 10.5px; font-family: var(--et-mono); }
 
 /* Diff header */
 .diff-node-pick { flex: 1 1 auto; min-width: 0; }

@@ -69,11 +69,19 @@ flowchart TB
 
 ## Visual Console
 
-Both the embedded standalone HTTP server (`exptree serve`) and the Antigravity Sidecar share the exact same lightweight interface: a structured list & lineage rail, an interactive left-to-right DAG canvas, a 2D multi-objective trade-off chart, and GitHub-style diffs.
+Both the embedded standalone HTTP server (`exptree serve`) and the Antigravity Sidecar share the exact same interface across a 12-node Kepler orbital integration run: a structured list & lineage rail, an interactive left-to-right DAG canvas, a balanced multi-objective trade-off overview, and GitHub-style diffs that preserve failed runs.
 
-| List & Lineage Rail | Left-to-Right DAG Canvas | Multi-Objective Trade-off Chart |
-| --- | --- | --- |
-| ![ExpTree Rail View](docs/assets/tree-dark.png) | ![ExpTree DAG Map](docs/assets/map-dark.png) | ![ExpTree Trade-off Chart](docs/assets/pareto-dark.png) |
+| List & Lineage Rail (12 Nodes) | Left-to-Right DAG Canvas |
+| --- | --- |
+| ![ExpTree Rail View](docs/assets/tree-light.png) | ![ExpTree DAG Map](docs/assets/map-light.png) |
+| **Overview & Multi-Objective Trade-off Chart** | **Preserved Failure Diff & Constraint Gate** |
+| ![ExpTree Trade-off Chart](docs/assets/pareto-light.png) | ![ExpTree Failure Diff](docs/assets/diff-light.png) |
+
+**Sample 12-node trajectory shown above (`kepler-orbit-sim`)**:
+- **Baseline & Constraint Veto (`node-0` → `node-1` / `node-7`, `node-4`)**: Fast non-symplectic / float32 shortcuts fail energy and angular-momentum bounds (`PRUNED`, commit preserved for diff inspection in **Failure Diff**); `node-4` forks directly from `node-1` to test an invariant-preserving retry.
+- **Parallel Depth Exploration (`node-2` → `node-5` → `node-8`, `node-3` → `node-6`)**: Speed-focused FSAL loop optimizations and high-order Yoshida integrators advance along separate trade-off directions.
+- **N-to-1 Semantic Convergence (`node-9`, `node-10`)**: Combines scalar register hoisting (`node-8`) with pre-multiplied 6th-order constants (`node-6`), pushing the leading trade-off frontier (`node-6` · `node-10` · `node-8`).
+- **Live Long-Running Eval (`node-11`)**: Streams `PROGRESS: 640/1000 ...` status updates in-place inside Overview (`动态`) without bloating `state.json`.
 
 ---
 

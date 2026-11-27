@@ -49,17 +49,26 @@
 
   // ---------- Host Theme Sync ----------
   function syncScheme() {
+    const forced = urlParams.get('theme');
+    if (forced === 'dark' || forced === 'light') {
+      if (document.documentElement.dataset.theme !== forced) {
+        document.documentElement.dataset.theme = forced;
+      }
+      return;
+    }
     const probe = document.createElement('span');
-    probe.style.cssText = 'position:absolute;visibility:hidden;color:var(--background, #f7f8fa)';
+    probe.style.cssText = 'position:absolute;visibility:hidden;color:var(--background, transparent)';
     document.documentElement.appendChild(probe);
     const c = getComputedStyle(probe).color;
     probe.remove();
     const nums = (c.match(/[\d.]+/g) || []).map(Number);
-    if (nums.length < 3) return;
-    const scale = c.startsWith('color(') ? 1 : 255;
-    const [r, g, b] = nums.slice(0, 3).map((v) => v / scale);
-    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    const theme = lum < 0.5 ? 'dark' : 'light';
+    let theme = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    if (nums.length >= 3 && !(nums.length >= 4 && nums[3] === 0)) {
+      const scale = c.startsWith('color(') ? 1 : 255;
+      const [r, g, b] = nums.slice(0, 3).map((v) => v / scale);
+      const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      theme = lum < 0.5 ? 'dark' : 'light';
+    }
     if (document.documentElement.dataset.theme !== theme) {
       document.documentElement.dataset.theme = theme;
     }
@@ -894,13 +903,13 @@
     return out;
   }
 
-  // 2D Pareto plot: nice ticks, outlier-robust range, light baseline crosshair and hover tips.
+  // 2D Pareto plot: nice ticks, outlier-robust range, light baseline crosshair and collision-free labels.
   function buildParetoPlot(ordered, objs, pFrontIds, root) {
     const objY = objs[0];
     const objX = objs[1];
     const pts = ordered.filter((n) => n.metrics && typeof n.metrics[objX.name] === 'number' && typeof n.metrics[objY.name] === 'number');
     if (!pts.length) return '';
-    const W = 320, H = 214, padL = 44, padR = 14, padT = 24, padB = 36;
+    const W = 460, H = 212, padL = 54, padR = 18, padT = 22, padB = 34;
     const plotW = W - padL - padR;
     const plotH = H - padT - padB;
 
@@ -915,7 +924,7 @@
       const tf = (v) => (useLog ? Math.log10(Math.max(v, 1e-300)) : v);
       let minT = Math.min(...vals.map(tf));
       let maxT = Math.max(...vals.map(tf));
-      const margin = (maxT - minT) * 0.1 || (useLog ? 0.5 : (Math.abs(maxT) * 0.1 || 1));
+      const margin = (maxT - minT) * 0.12 || (useLog ? 0.5 : (Math.abs(maxT) * 0.1 || 1));
       minT -= margin;
       maxT += margin;
       const span = maxT - minT;
@@ -939,12 +948,14 @@
 
     const xTicks = niceTicks(axX.minT, axX.maxT, axX.useLog).map((tk) => {
       const x = xOfG(axX.goodOfT(tk.t));
-      return `<line x1="${x}" y1="${padT + plotH}" x2="${x}" y2="${padT + plotH + 3}" stroke="var(--et-line-strong)"/>
+      return `<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT + plotH}" stroke="var(--et-line)" stroke-width="1"/>
+        <line x1="${x}" y1="${padT + plotH}" x2="${x}" y2="${padT + plotH + 3}" stroke="var(--et-line-strong)"/>
         <text x="${x}" y="${padT + plotH + 14}" text-anchor="middle" class="ax-tick">${esc(tk.label)}</text>`;
     }).join('');
     const yTicks = niceTicks(axY.minT, axY.maxT, axY.useLog).map((tk) => {
       const y = yOfG(axY.goodOfT(tk.t));
-      return `<line x1="${padL - 3}" y1="${y}" x2="${padL}" y2="${y}" stroke="var(--et-line-strong)"/>
+      return `<line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="var(--et-line)" stroke-width="1"/>
+        <line x1="${padL - 3}" y1="${y}" x2="${padL}" y2="${y}" stroke="var(--et-line-strong)"/>
         <text x="${padL - 6}" y="${y + 3}" text-anchor="end" class="ax-tick">${esc(tk.label)}</text>`;
     }).join('');
 
@@ -953,7 +964,7 @@
       <rect x="${rp.x}" y="${padT}" width="${Math.max(0, padL + plotW - rp.x)}" height="${Math.max(0, rp.y - padT)}" fill="var(--et-pass-bg)" opacity="0.65"/>
       <line x1="${rp.x}" y1="${padT}" x2="${rp.x}" y2="${padT + plotH}" stroke="var(--et-line-strong)" stroke-dasharray="2 3"/>
       <line x1="${padL}" y1="${rp.y}" x2="${padL + plotW}" y2="${rp.y}" stroke="var(--et-line-strong)" stroke-dasharray="2 3"/>
-      <text x="${padL + plotW - 5}" y="${padT + 12}" text-anchor="end" class="ax-note">优于基线</text>
+      <text x="${padL + plotW - 6}" y="${padT + 13}" text-anchor="end" class="ax-note">优于基线</text>
     ` : '';
 
     const frontPts = mapped.filter((p) => pFrontIds.includes(p.n.id)).sort((a, b) => a.gx - b.gx);
@@ -962,36 +973,55 @@
     const priority = (p) => (p.n.status === 'CONVERGED' ? 0 : (pFrontIds.includes(p.n.id) ? 1 : (p.n.status === 'PRUNED' ? 3 : 2)));
     const byPriority = [...mapped].sort((a, b) => priority(a) - priority(b));
     const placed = [];
-    const labelY = new Map();
+    const labelPos = new Map();
     for (const p of byPriority) {
       const isSel = S.selectedId === p.n.id;
-      let ly = p.y - (isSel ? 14 : 9);
-      if (ly < padT + 8 || placed.some((q) => Math.abs(q.x - p.x) < 22 && Math.abs(q.y - ly) < 10)) ly = p.y + (isSel ? 21 : 17);
-      placed.push({ x: p.x, y: ly });
-      labelY.set(p.n.id, ly);
+      const d = isSel ? 12 : 9;
+      const candidates = [
+        { x: p.x, y: p.y - d, anchor: 'middle' },
+        { x: p.x, y: p.y + d + 6, anchor: 'middle' },
+        { x: p.x + d + 1, y: p.y + 3, anchor: 'start' },
+        { x: p.x - d - 1, y: p.y + 3, anchor: 'end' },
+      ];
+      const fitsFrame = (c) => {
+        const minX = c.anchor === 'start' ? c.x : (c.anchor === 'end' ? c.x - 24 : c.x - 12);
+        const maxX = c.anchor === 'start' ? c.x + 24 : (c.anchor === 'end' ? c.x : c.x + 12);
+        return minX >= padL + 2 && maxX <= padL + plotW - 2 && c.y >= padT + 9 && c.y <= padT + plotH - 3;
+      };
+      const hasConflict = (c) => (
+        placed.some((q) => Math.abs(q.x - c.x) < 24 && Math.abs(q.y - c.y) < 11)
+        || mapped.some((m) => m.n.id !== p.n.id && Math.abs(m.x - c.x) < 12 && Math.abs(m.y - c.y) < 9)
+      );
+      const chosen = candidates.find((c) => fitsFrame(c) && !hasConflict(c))
+        || candidates.find((c) => fitsFrame(c))
+        || candidates[0];
+      placed.push({ x: chosen.x, y: chosen.y });
+      labelPos.set(p.n.id, chosen);
     }
 
     const markers = [...byPriority].reverse().map((p) => {
       const { n, x, y } = p;
       const onFront = pFrontIds.includes(n.id);
       const isSel = S.selectedId === n.id;
-      const sx = x.toFixed(1), sy = y.toFixed(1), ly = labelY.get(n.id).toFixed(1);
+      const sx = x.toFixed(1), sy = y.toFixed(1);
+      const lp = labelPos.get(n.id);
+      const lx = lp.x.toFixed(1), ly = lp.y.toFixed(1);
       const tip = `${n.id} · ${n.status}${p.pinned ? '（超出坐标范围，已贴边）' : ''}\n${objY.name} = ${fmtNum(n.metrics[objY.name])}\n${objX.name} = ${fmtNum(n.metrics[objX.name])}\n${hypoParts(n).title.slice(0, 60)}`;
-      const ring = isSel ? `<circle cx="${sx}" cy="${sy}" r="9.5" fill="none" stroke="var(--et-primary)" stroke-width="1.5"/>` : '';
-      const label = (fill, weight) => `<text x="${sx}" y="${ly}" text-anchor="middle" class="ax-label" font-weight="${weight}" fill="${fill}">${esc(n.id.replace('node-', '#'))}</text>`;
+      const ring = isSel ? `<circle cx="${sx}" cy="${sy}" r="8.5" fill="none" stroke="var(--et-primary)" stroke-width="1.5"/>` : '';
+      const label = (fill, weight) => `<text x="${lx}" y="${ly}" text-anchor="${lp.anchor}" class="ax-label" font-weight="${weight}" fill="${fill}">${esc(n.id.replace('node-', '#'))}</text>`;
       let glyph;
       if (n.status === 'PRUNED') {
         const c = isViolation(n) ? 'var(--et-prune)' : 'var(--et-fg-faint)';
-        glyph = `<circle cx="${sx}" cy="${sy}" r="4.5" fill="var(--et-card)" stroke="${c}" stroke-width="1.5"/>
-          <path d="M ${x - 2} ${y - 2} L ${x + 2} ${y + 2} M ${x + 2} ${y - 2} L ${x - 2} ${y + 2}" stroke="${c}" stroke-width="1.4"/>` + label(c, 400);
+        glyph = `<circle cx="${sx}" cy="${sy}" r="4" fill="var(--et-card)" stroke="${c}" stroke-width="1.5"/>
+          <path d="M ${x - 1.8} ${y - 1.8} L ${x + 1.8} ${y + 1.8} M ${x + 1.8} ${y - 1.8} L ${x - 1.8} ${y + 1.8}" stroke="${c}" stroke-width="1.35"/>` + label(c, 400);
       } else if (n.status === 'CONVERGED') {
-        glyph = `<polygon points="${x},${y - 6} ${x + 6},${y} ${x},${y + 6} ${x - 6},${y}" fill="var(--et-conv)" stroke="var(--et-card)" stroke-width="1.5"/>` + label('var(--et-conv)', 600);
+        glyph = `<polygon points="${x},${y - 5.5} ${x + 5.5},${y} ${x},${y + 5.5} ${x - 5.5},${y}" fill="var(--et-conv)" stroke="var(--et-card)" stroke-width="1.5"/>` + label('var(--et-conv)', 600);
       } else if (onFront) {
-        glyph = `<circle cx="${sx}" cy="${sy}" r="5" fill="var(--et-pass)" stroke="var(--et-card)" stroke-width="1.5"/>` + label('var(--et-fg)', 600);
+        glyph = `<circle cx="${sx}" cy="${sy}" r="4.5" fill="var(--et-pass)" stroke="var(--et-card)" stroke-width="1.5"/>` + label('var(--et-fg)', 600);
       } else {
-        glyph = `<circle cx="${sx}" cy="${sy}" r="4" fill="var(--et-card)" stroke="var(--et-fg-muted)" stroke-width="1.5"/>` + label('var(--et-fg-muted)', 400);
+        glyph = `<circle cx="${sx}" cy="${sy}" r="3.8" fill="var(--et-card)" stroke="var(--et-fg-muted)" stroke-width="1.5"/>` + label('var(--et-fg-muted)', 400);
       }
-      return `<g class="chart-pt" data-jump-node="${esc(n.id)}" data-tip="${esc(tip)}"><circle cx="${sx}" cy="${sy}" r="11" fill="transparent"/>${ring}${glyph}</g>`;
+      return `<g class="chart-pt" data-jump-node="${esc(n.id)}" data-tip="${esc(tip)}"><circle cx="${sx}" cy="${sy}" r="10" fill="transparent"/>${ring}${glyph}</g>`;
     }).join('');
 
     const dir = (o) => (o.higher_is_better ? '越大越好' : '越小越好');
@@ -1010,14 +1040,14 @@
           ${xTicks}${yTicks}
           ${markers}
           <text x="${padL + plotW / 2}" y="${H - 5}" text-anchor="middle" class="ax-title">${esc(xTitle)}</text>
-          <text x="${padL}" y="${padT - 9}" text-anchor="start" class="ax-title">${esc(yTitle)}</text>
+          <text x="${padL}" y="${padT - 8}" text-anchor="start" class="ax-title">${esc(yTitle)}</text>
         </svg>
       </div>`;
   }
 
   // Single-metric trend: best-so-far step envelope + per-node scatter (siblings are parallel, not sequential).
   function buildSparkChart(scored, root, best, hib) {
-    const W = 320, H = 128, padL = 44, padR = 10, padT = 12, padB = 22;
+    const W = 460, H = 136, padL = 54, padR = 14, padT = 14, padB = 24;
     const plotW = W - padL - padR;
     const plotH = H - padT - padB;
     const baseVal = typeof root?.primary_score === 'number' ? root.primary_score : scored[0].primary_score;
